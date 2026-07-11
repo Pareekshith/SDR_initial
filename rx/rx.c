@@ -58,7 +58,7 @@
  *
  *  Edge detection: MARK→SPACE  =  start bit.
  *  Half-bit centering + bit-period sampling — same state machine as OOK,
- *  now with FSK_BIT_PERIOD_BUF = 2 (20 ms/bit = 50 bps).
+ *  now with FSK_BIT_PERIOD_BUF = 5 (50 ms/bit = 20 bps).
  */
 
 #define _DEFAULT_SOURCE         /* expose M_PI under -std=c11 */
@@ -82,6 +82,80 @@ static void on_signal(int s) { (void)s; g_running = false; }
 
 typedef enum { S_IDLE, S_START, S_DATA, S_STOP } ook_state_t;
 static const char *state_name[] = { "IDLE ", "START", "DATA ", "STOP " };
+
+/* ── Frame-layer state machine ───────────────────────────────────────────
+ *
+ * Sits above the UART byte decoder.  Every time S_STOP delivers a valid
+ * byte, on_byte() advances this machine:
+ *
+ *   HUNT → (≥ FRAME_PREAMBLE_MIN × 0x55) → PRE → (0xD5) → LEN → DATA
+ *
+ * Any unexpected byte in HUNT/PRE resets the preamble counter.
+ * This ensures the receiver only prints data from properly framed
+ * transmissions — noise and partial frames are silently discarded.
+ */
+typedef enum { FS_HUNT, FS_PRE, FS_LEN, FS_DATA } frame_state_t;
+static const char *fs_name[]  = { "HUNT", "PRE ", "LEN ", "DATA" };
+
+static frame_state_t fs_state = FS_HUNT;
+static int           pre_cnt  = 0;
+static int           data_len = 0;
+static int           data_pos = 0;
+static uint8_t       data_buf[256];
+
+static void on_byte(uint8_t byte)
+{
+    switch (fs_state) {
+
+    case FS_HUNT:
+    case FS_PRE:
+        if (byte == FRAME_PREAMBLE_BYTE) {
+            pre_cnt++;
+            fprintf(stderr, "  [PRE ] 0x%02X  (%d / %d min)\n",
+                    byte, pre_cnt, FRAME_PREAMBLE_MIN);
+            if (pre_cnt >= FRAME_PREAMBLE_MIN)
+                fs_state = FS_PRE;          /* ready to accept SYNC */
+        } else if (byte == FRAME_SYNC_BYTE && pre_cnt >= FRAME_PREAMBLE_MIN) {
+            fprintf(stderr, "  [SYNC] 0x%02X  — frame start\n", byte);
+            fs_state = FS_LEN;
+        } else {
+            /* Unexpected byte — reset and keep hunting */
+            if (pre_cnt > 0)
+                fprintf(stderr, "  [DROP] 0x%02X  (preamble lost at %d)\n",
+                        byte, pre_cnt);
+            pre_cnt  = 0;
+            fs_state = FS_HUNT;
+        }
+        break;
+
+    case FS_LEN:
+        data_len = (int)byte;
+        data_pos = 0;
+        fprintf(stderr, "  [LEN ] %d byte%s\n", data_len,
+                data_len == 1 ? "" : "s");
+        if (data_len > 0 && data_len <= (int)sizeof(data_buf) - 1)
+            fs_state = FS_DATA;
+        else {
+            pre_cnt  = 0;
+            fs_state = FS_HUNT;
+        }
+        break;
+
+    case FS_DATA:
+        data_buf[data_pos++] = byte;
+        if (data_pos >= data_len) {
+            data_buf[data_pos] = '\0';
+            /* Decoded frame → stdout (clean, pipeable) */
+            fprintf(stdout, ">>> %s", (char *)data_buf);
+            if (data_buf[data_pos - 1] != '\n') fputc('\n', stdout);
+            fflush(stdout);
+            /* Reset for next frame */
+            fs_state = FS_HUNT;
+            pre_cnt  = 0;
+        }
+        break;
+    }
+}
 
 /* ── Goertzel: power at target_hz in one IQ buffer ─────────────────────────
  *
@@ -234,8 +308,11 @@ int main(void)
     float       last_dp   = 0.0f;  /* last ΔP = 10·log10(P_mark/P_space) dB */
     int         last_lvl  = 0;
 
-    fprintf(stdout, "\n--- RX DECODED ---\n");
-    fflush(stdout);
+    fprintf(stderr, "  Frame format  : [0x55 × %d preamble] [0xD5 sync] [LEN] [DATA]\n",
+            FRAME_PREAMBLE_MIN);
+    fprintf(stderr, "  Status format : [UART state | frame state]  ΔP dB  bit  tone\n\n");
+    fprintf(stderr, "  ─────────────────────────────────────────────────────────────\n");
+    fflush(stderr);
 
     while (g_running) {
 
@@ -310,17 +387,12 @@ int main(void)
         case S_STOP:
             /* Stop bit must be MARK ('1'). */
             if (++buf_cnt == FSK_BIT_PERIOD_BUF) {
-                if (lvl == 1) {
-                    char c = (char)dbyte;
-                    if (c >= 32 && c < 127)  fprintf(stdout, "%c", c);
-                    else if (c == '\n')       fprintf(stdout, "\n");
-                    else                      fprintf(stdout, "[%02X]", dbyte);
-                    fflush(stdout);
-                } else {
+                if (lvl == 1)
+                    on_byte(dbyte);          /* pass to frame state machine */
+                else
                     fprintf(stderr,
-                            "\n  [FRAME ERROR: stop=SPACE, partial=0x%02X]\n",
+                            "\n  [UART ERR] stop=SPACE, partial=0x%02X\n",
                             dbyte);
-                }
                 state   = S_IDLE;
                 buf_cnt = 0;
             }
@@ -331,11 +403,12 @@ int main(void)
 
         /* ── Status display every STATUS_INTERVAL buffers (500 ms) ─────── */
         if (++stat_cnt >= STATUS_INTERVAL) {
-            fprintf(stderr, "  [%s]  %+7.1f dB  '%c'  %s\n",
+            fprintf(stderr, "  [%s|%s]  %+7.1f dB  '%c'  %s\n",
                     state_name[state],
+                    fs_name[fs_state],
                     last_dp,
                     last_lvl ? '1' : '0',
-                    last_lvl ? "\033[32mMARK \033[0m" : "\033[33mSPACE\033[0m");
+                    last_lvl ? "MARK " : "SPACE");
             fflush(stderr);
             stat_cnt = 0;
         }

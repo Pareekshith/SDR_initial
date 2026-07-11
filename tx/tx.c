@@ -124,7 +124,7 @@ static void send_bit(int bit, struct timespec *next,
 }
 
 /* UART frame: start(SPACE=0), 8 data bits LSB first, stop(MARK=1) */
-static void send_byte(unsigned char c, struct timespec *next,
+static void send_byte(uint8_t c, struct timespec *next,
                       struct iio_channel *f1i, struct iio_channel *f1q,
                       struct iio_channel *f2i, struct iio_channel *f2q)
 {
@@ -132,6 +132,44 @@ static void send_byte(unsigned char c, struct timespec *next,
     for (int i = 0; i < 8; i++)
         send_bit((c >> i) & 1, next, f1i, f1q, f2i, f2q);
     send_bit(1, next, f1i, f1q, f2i, f2q);     /* stop:  MARK  */
+}
+
+/* ── RF frame: [0x55 × N] [0xD5] [LEN] [DATA ...] ──────────────────────────
+ *
+ * Preamble (0x55 = 01010101):
+ *   Each byte alternates MARK/SPACE on every bit — both FSK tones are
+ *   exercised repeatedly, giving the receiver AGC time to settle and
+ *   the bit-clock time to align before any data arrives.
+ *
+ * SYNC (0xD5 = 11010101):
+ *   Identical to the preamble byte except bit 7 is '1' instead of '0'.
+ *   It can only appear after a complete preamble sequence, so it is
+ *   unambiguous as a start-of-frame marker.
+ *
+ * LEN: 1-byte count of data bytes that follow.
+ */
+static void send_frame(const char *data, uint8_t len, struct timespec *next,
+                       struct iio_channel *f1i, struct iio_channel *f1q,
+                       struct iio_channel *f2i, struct iio_channel *f2q)
+{
+    fprintf(stderr, "  [PREAMBLE] %d × 0x%02X\n",
+            FRAME_PREAMBLE_CNT, FRAME_PREAMBLE_BYTE);
+    for (int i = 0; i < FRAME_PREAMBLE_CNT; i++)
+        send_byte(FRAME_PREAMBLE_BYTE, next, f1i, f1q, f2i, f2q);
+
+    fprintf(stderr, "  [SYNC    ] 0x%02X\n", FRAME_SYNC_BYTE);
+    send_byte(FRAME_SYNC_BYTE, next, f1i, f1q, f2i, f2q);
+
+    fprintf(stderr, "  [LEN     ] %u\n", len);
+    send_byte(len, next, f1i, f1q, f2i, f2q);
+
+    fprintf(stderr, "  [DATA    ] \"");
+    for (uint8_t i = 0; i < len; i++) {
+        uint8_t c = (uint8_t)data[i];
+        fprintf(stderr, "%c", (c >= 32 && c < 127) ? (char)c : '.');
+        send_byte(c, next, f1i, f1q, f2i, f2q);
+    }
+    fprintf(stderr, "\"\n");
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -241,26 +279,20 @@ int main(void)
 
     int msg_num = 0;
     while (g_running) {
-        fprintf(stderr, "── TX msg #%d ──────────────────────────────\n", ++msg_num);
+        fprintf(stderr, "── TX frame #%d ─────────────────────────────\n", ++msg_num);
 
-        /* Anchor the absolute bit-clock to "right now + one bit period".
-         * send_bit() sleeps to this deadline then advances it, so consecutive
-         * bits are exactly FSK_BIT_PERIOD_US apart regardless of IIO latency. */
+        /* Anchor the absolute bit-clock to now + one bit period.
+         * send_bit() sleeps to this absolute deadline so IIO write latency
+         * does not accumulate — each bit starts exactly FSK_BIT_PERIOD_US
+         * after the previous, regardless of how long the DDS writes took. */
         struct timespec next;
         clock_gettime(CLOCK_MONOTONIC, &next);
         ts_add_us(&next, FSK_BIT_PERIOD_US);
 
-        for (const char *p = FSK_MESSAGE; *p && g_running; p++) {
-            unsigned char c = (unsigned char)*p;
-            fprintf(stderr, "  '%c' 0x%02X  [S|",
-                    (c >= 32 && c < 127) ? c : '.', c);
-            for (int i = 0; i < 8; i++)
-                fprintf(stderr, "%d", (c >> i) & 1);
-            fprintf(stderr, "|M]\n");
-            send_byte(c, &next, f1i, f1q, f2i, f2q);
-        }
+        const char *msg = FSK_MESSAGE;
+        send_frame(msg, (uint8_t)strlen(msg), &next, f1i, f1q, f2i, f2q);
 
-        /* Inter-message gap: carrier stays at MARK (idle = MARK = '1') */
+        /* Inter-frame gap: stay at MARK (UART idle = '1') */
         fprintf(stderr, "  [2.5 s idle at MARK]\n\n");
         for (int i = 0; i < 25 && g_running; i++)
             usleep(100000);

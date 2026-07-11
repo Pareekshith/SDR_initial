@@ -90,6 +90,25 @@
 #define FSK_MIN_IDLE_BUF          3     /* min MARK buffers before start bit  */
 #define FSK_MESSAGE         OOK_MESSAGE /* same content, 10× faster rate      */
 
+/* ── RF Frame protocol  [PREAMBLE × N | SYNC | LEN | DATA ...] ─────────── */
+/*
+ * Every transmission is wrapped in a frame so the receiver can
+ * distinguish data from noise and join mid-stream:
+ *
+ *   0x55 = 01010101  alternating bits → exercises both FSK tones equally
+ *                    → AGC settles, bit-clock aligns
+ *   0xD5 = 11010101  identical to 0x55 but bit 7 flipped → end-of-preamble
+ *                    marker that cannot appear mid-preamble
+ *
+ * TX sends FRAME_PREAMBLE_CNT × 0x55, then 0xD5, then 1-byte length,
+ * then the data bytes.
+ * RX demands ≥ FRAME_PREAMBLE_MIN × 0x55 before it trusts a 0xD5.
+ */
+#define FRAME_PREAMBLE_BYTE  0x55   /* 01010101 — alternating MARK/SPACE      */
+#define FRAME_SYNC_BYTE      0xD5   /* 11010101 — end-of-preamble marker      */
+#define FRAME_PREAMBLE_CNT   4      /* TX: preamble bytes to send             */
+#define FRAME_PREAMBLE_MIN   2      /* RX: minimum 0x55 bytes before SYNC ok  */
+
 /* ── IIO device names (same on Zedboard and Pluto+) ────────────────────── */
 #define PHY_DEVICE      "ad9361-phy"          /* controls LO, gain, filters  */
 #define TX_DDS_DEVICE   "cf-ad9361-dds-core-lpc" /* FPGA DDS — tone output   */
