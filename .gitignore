@@ -1,0 +1,10 @@
+# Compiled binaries
+rx/rx
+tx/tx
+
+# Cross-compilation sysroot (symlink to ../AD9361_FM_radio/arm-sysroot)
+arm-sysroot
+
+# Editor / IDE
+.vscode/
+.claude/

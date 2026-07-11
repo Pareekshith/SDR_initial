@@ -1,0 +1,16 @@
+SDR Devices - Network Info
+==========================
+
+ZedBoard (Zynq-7000 + AD9361)
+  IP  : 192.168.1.110
+  MAC : 00:0a:35:00:01:23  (hw: 00:0a:35:00:01:22)
+  Access : SSH or serial via /dev/ttyACM0 (115200 8N1)
+
+PlutoSDR+ / Pluto+ clone (Zynq-7010 + AD9361)
+  IP  : 192.168.1.102  (Ethernet, static)
+        192.168.2.1    (USB tunnel, always available)
+  MAC : 00:0a:35:00:01:22
+  Access : SSH root@192.168.1.102  or  root@192.168.2.1
+  Password : analog
+
+Network : 192.168.1.0/24  (TP-Link home router, gateway 192.168.1.1)
