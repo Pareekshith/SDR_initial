@@ -58,11 +58,19 @@
  *
  * ── Why 23040 samples? ────────────────────────────────────────────────────
  *
- *   2304000 / 100000 = 23.04 samples per 100 kHz cycle.
- *   23.04 × 1000 = 23040 — exactly 1000 complete cycles in the buffer.
- *   A cyclic buffer wraps with zero phase discontinuity. Any non-integer
- *   wrap produces a glitch at the seam every 10 ms (a 100 Hz sideband).
- *   Choosing a whole-cycle length eliminates this completely.
+ *   DFT bin width = fs / N = 2304000 / 23040 = 100 Hz exactly.
+ *   Every multiple of 100 Hz lands on an exact DFT bin.
+ *
+ *   This buffer length works cleanly for ALL three FSK-related tones:
+ *     50 kHz  → bin  500 →  500 complete cycles  (SPACE tone)
+ *    100 kHz  → bin 1000 → 1000 complete cycles  (OOK/DDS offset)
+ *    150 kHz  → bin 1500 → 1500 complete cycles  (MARK tone  ← we use this)
+ *
+ *   A tone on an exact DFT bin produces ZERO sidelobes into adjacent bins
+ *   (DFT orthogonality). This is why a 100 kHz CW tone contributes exactly
+ *   zero power to the 50 kHz and 150 kHz FSK Goertzel filters — the FSK
+ *   decoder sees only noise for a 100 kHz tone. We use 150 kHz so the FSK
+ *   RX registers the DMA tone the same way it registers the DDS MARK tone.
  */
 
 #define _DEFAULT_SOURCE
@@ -79,11 +87,19 @@
 #include "../common/rf_params.h"
 
 /*
- * Buffer holds exactly 1000 cycles of the 100 kHz tone at 2.304 Msps.
- * (2304000 / 100000) × 1000 = 23040  — zero-glitch cyclic wrap.
+ * Buffer holds exactly 1500 cycles of the 150 kHz MARK tone at 2.304 Msps.
+ * (2304000 / 150000) × 1500 = 23040  — zero-glitch cyclic wrap.
+ *
+ * Using MARK (150 kHz) so the FSK decoder on Pluto+ directly measures the
+ * DMA output power: constant ΔP ≈ +17..+25 dB (same as DDS MARK) confirms
+ * the DMA path delivers the same amplitude as the DDS hardware tone.
+ *
+ * DFT orthogonality reminder: 150 kHz = bin 1500 (at 100 Hz/bin) contributes
+ * zero power to the 50 kHz SPACE bin — the same property that made 100 kHz
+ * invisible to both FSK Goertzel filters in the first test run.
  */
 #define CW_BUF_SAMPLES  23040
-#define CW_TONE_HZ      DDS_TONE_OFFSET_HZ          /* 100 kHz, same as OOK */
+#define CW_TONE_HZ      FSK_TONE_MARK_HZ             /* 150 kHz = FSK MARK   */
 #define CW_AMPLITUDE    ((int16_t)(0.9f * 32767.0f)) /* 90% full scale = 29490 */
 
 static volatile bool g_running = true;
