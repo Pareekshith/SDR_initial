@@ -68,6 +68,28 @@
 #define OOK_THRESHOLD_DBFS  (-55.0f)        /* decision level: noise≈-78, sig≈-37 */
 #define OOK_MESSAGE         "HELLO SDR\n"   /* message TX loops forever      */
 
+/* ── FSK data link parameters (must match on TX and RX) ────────────────── */
+/*
+ * 2-FSK tones — both above LO to avoid the DC (LO-leakage) spike:
+ *
+ *   MARK  (bit '1') : LO + 150 kHz  →  434.070 MHz over the air
+ *   SPACE (bit '0') : LO +  50 kHz  →  433.970 MHz over the air
+ *
+ * Both fall within the 400 kHz passband (LPF edge at ±200 kHz).
+ * Tone spacing = 100 kHz.  Bin width at 2.304 Msps / 23040 = 100 Hz,
+ * so both tones land on exact DFT bins → zero spectral leakage in Goertzel.
+ *
+ * RX LO = CARRIER_FREQ_HZ (433.920 MHz, same as TX LO).
+ * After down-conversion: MARK at 150 kHz baseband, SPACE at 50 kHz baseband.
+ */
+#define FSK_TONE_MARK_HZ     150000LL   /* bit '1' MARK  : 150 kHz above LO  */
+#define FSK_TONE_SPACE_HZ     50000LL   /* bit '0' SPACE :  50 kHz above LO  */
+#define FSK_BIT_PERIOD_US     20000     /* 20 ms/bit = 50 bps                 */
+#define FSK_BIT_PERIOD_BUF        2     /* 2 × 10 ms buffers per bit          */
+#define FSK_HALF_BIT_BUF          1     /* 1 buffer: start-bit centering      */
+#define FSK_MIN_IDLE_BUF          2     /* min MARK buffers before start bit  */
+#define FSK_MESSAGE         OOK_MESSAGE /* same content, 10× faster rate      */
+
 /* ── IIO device names (same on Zedboard and Pluto+) ────────────────────── */
 #define PHY_DEVICE      "ad9361-phy"          /* controls LO, gain, filters  */
 #define TX_DDS_DEVICE   "cf-ad9361-dds-core-lpc" /* FPGA DDS — tone output   */

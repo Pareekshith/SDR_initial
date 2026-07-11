@@ -1,61 +1,67 @@
 /*
- * rx.c — OOK / UART Receiver + Decoder
+ * rx.c — 2-FSK Receiver / UART Decoder
  * Runs on : ADALM-PLUTO+ (AD9361)
  * Build   : cross-compile from laptop (see Makefile)
  * Run     : /tmp/rx
  *
  * ════════════════════════════════════════════════════════════════════════════
- * LESSON 4 — IQ envelope detection (recap)
+ * LESSON 9 — FSK demodulation: frequency, not amplitude
  * ════════════════════════════════════════════════════════════════════════════
  *
- *  After down-conversion, the AD9361 gives us complex baseband samples:
+ *  OOK decision: is the amplitude above a threshold?
+ *  FSK decision: which of two frequencies has more power?
  *
- *    I(t) = A·cos(2π·Δf·t + φ)
- *    Q(t) = A·sin(2π·Δf·t + φ)
+ *    P_mark  = power at 150 kHz  (MARK,  bit '1')
+ *    P_space = power at  50 kHz  (SPACE, bit '0')
  *
- *  We recover the amplitude A (regardless of phase φ) by:
+ *    if P_mark > P_space  → bit = 1
+ *    else                 → bit = 0
  *
- *    magnitude = √(I² + Q²) = A     (Pythagoras — works for any φ)
+ *  No threshold to tune.  The decision is relative, so amplitude fading
+ *  and gain changes are irrelevant — both frequencies fade equally.
  *
- * ════════════════════════════════════════════════════════════════════════════
- * LESSON 7 — OOK detection
- * ════════════════════════════════════════════════════════════════════════════
- *
- *  OOK turns the carrier ON (1) or OFF (0).  We detect it by:
- *
- *    1. Compute RMS of √(I²+Q²) over one buffer (10 ms)
- *    2. Compare RMS → dBFS against a threshold:
- *         dBFS > OOK_THRESHOLD_DBFS  →  level = 1  (carrier present)
- *         dBFS ≤ OOK_THRESHOLD_DBFS  →  level = 0  (silence)
- *
- *  Our baseline: signal ≈ -37 dBFS (TX on),  noise ≈ -78 dBFS (TX off).
- *  Threshold at -55 dBFS sits 18 dB above noise, 18 dB below signal.
+ *  RX LO = CARRIER_FREQ_HZ (433.920 MHz, same as TX LO).
+ *  After mixing: MARK lands at 150 kHz baseband, SPACE at 50 kHz baseband.
  *
  * ════════════════════════════════════════════════════════════════════════════
- * LESSON 8 — UART framing decoder
+ * LESSON 10 — Goertzel algorithm: single-frequency DFT
  * ════════════════════════════════════════════════════════════════════════════
  *
- *  The TX sends bytes with UART framing (one bit = OOK_BIT_PERIOD_US):
+ *  We need power at exactly two frequencies.  A full FFT computes all N/2
+ *  bins — wasteful.  The Goertzel algorithm computes the DFT at ONE target
+ *  frequency in O(N) time, with only two trig operations (not N):
  *
- *    [IDLE=1] ··· [START=0][b0][b1][b2][b3][b4][b5][b6][b7][STOP=1] ···
+ *    ω  = 2π × f_target / f_s
+ *    coeff = 2 cos(ω)          ← computed once
  *
- *  We recover the bit clock by edge detection:
+ *    For each sample x[n]:
+ *      s[n] = coeff × s[n-1]  −  s[n-2]  +  x[n]     (IIR recursion)
  *
- *    1. Wait in IDLE until we see a falling edge (1→0) = start bit begins.
- *    2. Wait half a bit period (OOK_HALF_BIT_BUF × 10 ms) to land in the
- *       CENTRE of the start bit.  Sampling in the centre maximises noise margin.
- *    3. Every OOK_BIT_PERIOD_BUF buffers, sample one bit.  Do this 8 times.
- *    4. Verify stop bit (must be 1), then assemble byte and print.
+ *    After N samples:
+ *      |X(k)|²  =  s[N-1]² + s[N-2]² − coeff × s[N-1] × s[N-2]
  *
- *  Timing diagram (each cell = one 10 ms buffer, × = sample point):
+ *  This is identical to the DFT at bin k = f_target × N / f_s.
  *
- *   edge                             bit0    bit1  …  bit7   stop
- *    ↓                                ↓       ↓         ↓      ↓
- *    |  start  |   5 buf  |× 10 buf  ×|  10  ×| …   10 ×| 10  ×|
- *    |_________|          |            |       |          |      |‾‾‾
+ *  Our tones land on EXACT bins (bin 500 for 50 kHz, bin 1500 for 150 kHz,
+ *  since f_s/N = 2304000/23040 = 100 Hz).  No spectral leakage → perfect
+ *  discrimination between MARK and SPACE.
  *
- *  State machine:  IDLE → START → DATA → STOP → IDLE → …
+ *  We run Goertzel on I and Q separately and sum the powers.  For a
+ *  single-sideband complex tone, both channels carry equal power and
+ *  the sum gives the correct total.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * LESSON 8 — UART framing decoder (unchanged from OOK)
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ *  [IDLE=MARK]···[START=SPACE][b0]···[b7][STOP=MARK]···
+ *
+ *  Edge detection: MARK→SPACE  =  start bit.
+ *  Half-bit centering + bit-period sampling — same state machine as OOK,
+ *  now with FSK_BIT_PERIOD_BUF = 2 (20 ms/bit = 50 bps).
  */
+
+#define _DEFAULT_SOURCE         /* expose M_PI under -std=c11 */
 
 #include <iio.h>
 #include <math.h>
@@ -68,16 +74,51 @@
 
 #include "../common/rf_params.h"
 
-#define BUFFER_SAMPLES   23040          /* 10 ms at 2.304 Msps                */
-#define STATUS_INTERVAL  100            /* print status every 100 buf = 1 s   */
+#define BUFFER_SAMPLES   23040          /* 10 ms at 2.304 Msps               */
+#define STATUS_INTERVAL  50             /* print status every 50 buf = 500 ms */
 
 static volatile bool g_running = true;
 static void on_signal(int s) { (void)s; g_running = false; }
 
-/* ── Decoder state machine ──────────────────────────────────────────────── */
 typedef enum { S_IDLE, S_START, S_DATA, S_STOP } ook_state_t;
-
 static const char *state_name[] = { "IDLE ", "START", "DATA ", "STOP " };
+
+/* ── Goertzel: power at target_hz in one IQ buffer ─────────────────────────
+ *
+ * base : pointer to first IQ sample  (from iio_buffer_first)
+ * step : bytes between samples       (from iio_buffer_step, = 4 for int16 IQ)
+ * n    : number of IQ pairs
+ *
+ * Memory layout: [I_lo I_hi Q_lo Q_hi][I_lo I_hi Q_lo Q_hi]...
+ * I = *(int16_t *)(ptr + 0),  Q = *(int16_t *)(ptr + 2)
+ */
+static float goertzel_power(const char *base, ptrdiff_t step, int n,
+                             float target_hz, float sample_rate)
+{
+    float omega = 2.0f * (float)M_PI * target_hz / sample_rate;
+    float coeff = 2.0f * cosf(omega);          /* computed once per call */
+
+    float sI1 = 0.0f, sI2 = 0.0f;             /* IIR state for I channel */
+    float sQ1 = 0.0f, sQ2 = 0.0f;             /* IIR state for Q channel */
+
+    const char *p = base;
+    for (int i = 0; i < n; i++, p += step) {
+        const int16_t *iq = (const int16_t *)p;
+        float I = (float)iq[0];
+        float Q = (float)iq[1];
+
+        float sI0 = coeff * sI1 - sI2 + I;
+        sI2 = sI1;  sI1 = sI0;
+
+        float sQ0 = coeff * sQ1 - sQ2 + Q;
+        sQ2 = sQ1;  sQ1 = sQ0;
+    }
+
+    /* |X(k)|² for each channel, then sum */
+    float pI = sI1*sI1 + sI2*sI2 - coeff*sI1*sI2;
+    float pQ = sQ1*sQ1 + sQ2*sQ2 - coeff*sQ1*sQ2;
+    return pI + pQ;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
@@ -88,7 +129,7 @@ int main(void)
 
     fprintf(stderr,
         "\n╔══════════════════════════════════════════════════════════╗\n"
-        "║  SDR_Link — OOK Receiver / Decoder (Pluto+ / AD9361)     ║\n"
+        "║  SDR_Link — 2-FSK Receiver / Decoder (Pluto+ / AD9361)   ║\n"
         "╚══════════════════════════════════════════════════════════╝\n\n");
 
     /* ── Step 1: Open IIO context ───────────────────────────────────────── */
@@ -119,21 +160,33 @@ int main(void)
     }
 
     /*
-     * Tune the RX LO directly to the TX tone frequency (434.020 MHz).
-     * After mixing, the tone appears at 0 Hz (DC) in baseband.
-     * √(I²+Q²) gives the envelope — perfect for OOK detection.
+     * RX LO = CARRIER_FREQ_HZ (433.920 MHz) — same as TX LO.
+     * After down-conversion:
+     *   MARK  (434.070 MHz)  →  150 kHz in baseband
+     *   SPACE (433.970 MHz)  →   50 kHz in baseband
+     * Both land on exact Goertzel bins (bin 1500 and bin 500).
      */
-    iio_channel_attr_write_longlong(lo_rx,  "frequency",          TONE_FREQ_HZ);
+    iio_channel_attr_write_longlong(lo_rx,  "frequency",          CARRIER_FREQ_HZ);
     iio_channel_attr_write_longlong(rx_phy, "rf_bandwidth",       RF_BANDWIDTH_HZ);
     iio_channel_attr_write_longlong(rx_phy, "sampling_frequency", SAMPLE_RATE_HZ);
 
-    /* Manual gain: fixed at 40 dB so noise floor stays low */
+    /* Manual gain: FSK doesn't care about amplitude, but fixed gain keeps
+     * the Goertzel values in a stable range for display purposes.         */
     iio_channel_attr_write(rx_phy, "gain_control_mode", "manual");
     iio_channel_attr_write_longlong(rx_phy, "hardwaregain", 40);
 
-    fprintf(stderr, "        RX LO     : %.3f MHz\n", TONE_FREQ_HZ / 1e6);
-    fprintf(stderr, "        Gain      : 40 dB manual\n");
-    fprintf(stderr, "        Threshold : %.1f dBFS\n\n", OOK_THRESHOLD_DBFS);
+    fprintf(stderr, "        RX LO     : %.3f MHz  (= TX LO)\n",
+            CARRIER_FREQ_HZ / 1e6);
+    fprintf(stderr, "        MARK bin  : %.0f kHz  (Goertzel bin %lld)\n",
+            FSK_TONE_MARK_HZ / 1e3,
+            FSK_TONE_MARK_HZ * BUFFER_SAMPLES / SAMPLE_RATE_HZ);
+    fprintf(stderr, "        SPACE bin : %.0f kHz  (Goertzel bin %lld)\n",
+            FSK_TONE_SPACE_HZ / 1e3,
+            FSK_TONE_SPACE_HZ * BUFFER_SAMPLES / SAMPLE_RATE_HZ);
+    fprintf(stderr, "        Bit rate  : %d bps (%d ms/bit, %d buf/bit)\n\n",
+            1000000 / FSK_BIT_PERIOD_US,
+            FSK_BIT_PERIOD_US / 1000,
+            FSK_BIT_PERIOD_BUF);
 
     /* ── Step 3: Enable IQ channels and create DMA buffer ──────────────── */
     fprintf(stderr, "[ 3/4 ] Creating RX buffer...\n");
@@ -153,36 +206,33 @@ int main(void)
         iio_context_destroy(ctx);
         return EXIT_FAILURE;
     }
-    fprintf(stderr, "        Buffer    : %d samples (%.0f ms)\n\n",
+    fprintf(stderr, "        Buffer    : %d IQ samples (%.0f ms)\n\n",
             BUFFER_SAMPLES, 1000.0 * BUFFER_SAMPLES / SAMPLE_RATE_HZ);
 
-    /* ── Step 4: OOK decoder loop ────────────────────────────────────────
+    /* ── Step 4: FSK decoder loop ────────────────────────────────────────
      *
-     * One iteration = one buffer refill = 10 ms of samples.
-     *
-     * Each iteration:
+     * Each buffer iteration (10 ms):
      *   1. Refill buffer (DMA from ADC)
-     *   2. Compute RMS of |IQ| → dBFS → binary level (0 or 1)
-     *   3. Advance the UART decoder state machine
-     *   4. Print status to stderr, decoded chars to stdout
+     *   2. Goertzel at 150 kHz → P_mark
+     *   3. Goertzel at  50 kHz → P_space
+     *   4. lvl = (P_mark > P_space) ? 1 : 0
+     *   5. UART state machine — identical to OOK version
      */
-    fprintf(stderr, "[ 4/4 ] Listening on %.3f MHz — press Ctrl-C to stop.\n",
-            TONE_FREQ_HZ / 1e6);
-    fprintf(stderr, "        Decoded message appears below.\n\n");
-    fprintf(stderr, "  [state] [dBFS]   [level]\n");
-    fprintf(stderr, "  ─────────────────────────────────────────────\n");
+    fprintf(stderr, "[ 4/4 ] Listening for FSK on %.3f–%.3f MHz — Ctrl-C to stop.\n\n",
+            (CARRIER_FREQ_HZ + FSK_TONE_SPACE_HZ) / 1e6,
+            (CARRIER_FREQ_HZ + FSK_TONE_MARK_HZ) / 1e6);
+    fprintf(stderr, "  [state]  ΔP (dB)   bit   ← positive=MARK='1', negative=SPACE='0'\n");
+    fprintf(stderr, "  ─────────────────────────────────────────────────────────────\n");
 
     ook_state_t state    = S_IDLE;
-    int         buf_cnt  = 0;       /* buffers counted within current state   */
-    int         bit_cnt  = 0;       /* data bits collected so far             */
-    uint8_t     dbyte    = 0;       /* accumulates data bits                  */
-    int         prev_lvl = 0;       /* previous level — start at 0, not 1:   */
-                                    /*   if 1, first noise buffer fakes a     */
-                                    /*   falling edge and corrupt-starts the  */
-                                    /*   decoder before TX even transmits.    */
-    int         consec_hi = 0;      /* consecutive buffers where lvl==1       */
-    int         stat_cnt = 0;       /* counter for status display             */
-    float       last_dbfs = -99.0f;
+    int         buf_cnt  = 0;
+    int         bit_cnt  = 0;
+    uint8_t     dbyte    = 0;
+    int         prev_lvl = 0;      /* 0 = SPACE, 1 = MARK; start at SPACE   */
+    int         consec_hi = 0;     /* consecutive MARK buffers               */
+    int         stat_cnt  = 0;
+    float       last_dp   = 0.0f;  /* last ΔP = 10·log10(P_mark/P_space) dB */
+    int         last_lvl  = 0;
 
     fprintf(stdout, "\n--- RX DECODED ---\n");
     fflush(stdout);
@@ -196,36 +246,25 @@ int main(void)
             break;
         }
 
-        /* ── Compute RMS of √(I²+Q²) over buffer ──────────────────────── */
-        char     *p    = iio_buffer_first(buf, rx_i);
-        char     *end  = iio_buffer_end(buf);
-        ptrdiff_t step = iio_buffer_step(buf);
-        double    ssq  = 0.0;
-        long      nsmp = 0;
+        /* ── Goertzel at both FSK tones ────────────────────────────────── */
+        const char *base = iio_buffer_first(buf, rx_i);
+        ptrdiff_t   step = iio_buffer_step(buf);
 
-        while (p < end) {
-            const int16_t *iq = (const int16_t *)p;
-            float I = (float)iq[0], Q = (float)iq[1];
-            ssq += (double)I*I + (double)Q*Q;
-            nsmp++;
-            p += step;
-        }
-
-        float rms  = sqrtf((float)(ssq / nsmp));
-        float dbfs = 20.0f * log10f(rms / 32767.0f + 1e-10f);
-        int   lvl  = (dbfs > OOK_THRESHOLD_DBFS) ? 1 : 0;
-        last_dbfs  = dbfs;
+        float pm = goertzel_power(base, step, BUFFER_SAMPLES,
+                                  (float)FSK_TONE_MARK_HZ,  (float)SAMPLE_RATE_HZ);
+        float ps = goertzel_power(base, step, BUFFER_SAMPLES,
+                                  (float)FSK_TONE_SPACE_HZ, (float)SAMPLE_RATE_HZ);
 
         /*
-         * Track consecutive high (ON) buffers BEFORE updating prev_lvl.
-         * We use this in S_IDLE to require a minimum confirmed idle period
-         * before accepting a falling edge as a start bit.
-         *
-         * Why: UART data contains many 1→0 transitions inside bytes.
-         * A stop bit lasts 100 ms (10 buffers), so we require ≥3 consecutive
-         * ON buffers (30 ms) before triggering.  This passes every genuine
-         * stop-bit→start-bit boundary and blocks mid-data false triggers.
+         * Frequency decision: which tone is louder?
+         * The 1e-10 guard prevents log10(0) on pure silence.
          */
+        int   lvl = (pm > ps) ? 1 : 0;
+        float dp  = 10.0f * log10f(pm / (ps + 1e-10f));   /* ΔP in dB */
+        last_dp   = dp;
+        last_lvl  = lvl;
+
+        /* ── Consecutive MARK counter (for start-bit guard) ────────────── */
         int prev_consec = consec_hi;
         if (lvl == 1) consec_hi++;
         else          consec_hi = 0;
@@ -235,46 +274,32 @@ int main(void)
 
         case S_IDLE:
             /*
-             * Wait for a CONFIRMED falling edge:
-             *   - prev_lvl == 1 and lvl == 0  (the edge itself)
-             *   - prev_consec >= 3             (≥30 ms of confirmed idle before it)
-             *
-             * Without the prev_consec guard, any 1→0 data transition triggers
-             * a false start and the decoder drifts forever.
+             * Wait for MARK→SPACE falling edge.
+             * Require FSK_MIN_IDLE_BUF consecutive MARK buffers first so
+             * mid-data MARK bits (which are only 2 buffers long) cannot
+             * re-trigger the decoder if a framing error drops us here.
              */
-            if (prev_lvl == 1 && lvl == 0 && prev_consec >= 3) {
+            if (prev_lvl == 1 && lvl == 0 && prev_consec >= FSK_MIN_IDLE_BUF) {
                 buf_cnt = 0;
                 state   = S_START;
             }
             break;
 
         case S_START:
-            /*
-             * We're in the start bit.  Wait OOK_HALF_BIT_BUF buffers (50 ms)
-             * to land in the CENTRE of the start bit, then verify it's still 0.
-             * Sampling the centre gives maximum noise immunity.
-             */
-            if (++buf_cnt == OOK_HALF_BIT_BUF) {
+            /* Wait half a bit (1 buffer = 10 ms) to land in the centre.  */
+            if (++buf_cnt == FSK_HALF_BIT_BUF) {
                 if (lvl == 0) {
-                    /* confirmed start bit — prepare to collect data bits */
-                    buf_cnt = 0;
-                    bit_cnt = 0;
-                    dbyte   = 0;
+                    buf_cnt = 0;  bit_cnt = 0;  dbyte = 0;
                     state   = S_DATA;
                 } else {
-                    /* glitch, not a real start bit */
-                    state = S_IDLE;
+                    state = S_IDLE;          /* glitch — abandon */
                 }
             }
             break;
 
         case S_DATA:
-            /*
-             * Sample one bit every OOK_BIT_PERIOD_BUF buffers.
-             * UART sends LSB first, so bit 0 arrives first.
-             * We place each received bit into dbyte at the correct position.
-             */
-            if (++buf_cnt == OOK_BIT_PERIOD_BUF) {
+            /* Sample one bit every FSK_BIT_PERIOD_BUF buffers (= 20 ms). */
+            if (++buf_cnt == FSK_BIT_PERIOD_BUF) {
                 dbyte  |= (uint8_t)(lvl << bit_cnt);
                 buf_cnt = 0;
                 if (++bit_cnt == 8)
@@ -283,23 +308,17 @@ int main(void)
             break;
 
         case S_STOP:
-            /*
-             * Sample the stop bit.  It must be 1 (carrier ON).
-             * If it is, dbyte is a valid received byte — print it.
-             */
-            if (++buf_cnt == OOK_BIT_PERIOD_BUF) {
+            /* Stop bit must be MARK ('1'). */
+            if (++buf_cnt == FSK_BIT_PERIOD_BUF) {
                 if (lvl == 1) {
-                    /* Valid byte received */
                     char c = (char)dbyte;
-                    if (c >= 32 && c < 127)
-                        fprintf(stdout, "%c", c);
-                    else if (c == '\n')
-                        fprintf(stdout, "\n");
-                    else
-                        fprintf(stdout, "[%02X]", dbyte);
+                    if (c >= 32 && c < 127)  fprintf(stdout, "%c", c);
+                    else if (c == '\n')       fprintf(stdout, "\n");
+                    else                      fprintf(stdout, "[%02X]", dbyte);
                     fflush(stdout);
                 } else {
-                    fprintf(stderr, "\n  [FRAME ERROR: stop=0, partial=0x%02X]\n",
+                    fprintf(stderr,
+                            "\n  [FRAME ERROR: stop=SPACE, partial=0x%02X]\n",
                             dbyte);
                 }
                 state   = S_IDLE;
@@ -310,12 +329,13 @@ int main(void)
 
         prev_lvl = lvl;
 
-        /* ── Status display (stderr) — every STATUS_INTERVAL buffers ───── */
+        /* ── Status display every STATUS_INTERVAL buffers (500 ms) ─────── */
         if (++stat_cnt >= STATUS_INTERVAL) {
-            fprintf(stderr, "  [%s] %6.1f dBFS  %s\n",
+            fprintf(stderr, "  [%s]  %+7.1f dB  '%c'  %s\n",
                     state_name[state],
-                    last_dbfs,
-                    lvl ? "\033[32m▓▓▓\033[0m" : "\033[31m░░░\033[0m");
+                    last_dp,
+                    last_lvl ? '1' : '0',
+                    last_lvl ? "\033[32mMARK \033[0m" : "\033[33mSPACE\033[0m");
             fflush(stderr);
             stat_cnt = 0;
         }

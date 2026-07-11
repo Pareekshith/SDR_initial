@@ -1,73 +1,64 @@
 /*
- * tx.c — OOK (On-Off Keying) Transmitter
+ * tx.c — 2-FSK Transmitter
  * Runs on : Zedboard + FMCOMMS2/3 (AD9361)
  * Build   : make tx-build
  *
  * ════════════════════════════════════════════════════════════════════════════
- * LESSON 1 — What is a radio carrier wave?
+ * LESSON 9 — Frequency Shift Keying (FSK)
  * ════════════════════════════════════════════════════════════════════════════
  *
- *  A radio wave is just a sine wave oscillating at very high frequency:
+ *  In OOK we turned the carrier ON/OFF.  The receiver had to detect whether
+ *  the carrier was present — simple, but fragile: amplitude fading, AGC
+ *  hunting, and path-loss changes all corrupt the decision.
  *
- *    v(t) = A · cos(2π · f_carrier · t)
+ *  FSK is different: the carrier is ALWAYS present; we only shift its
+ *  frequency between two values:
  *
- *  At 434 MHz this sine wave completes 434,000,000 cycles per second.
- *  We can't compute samples at 434 MHz directly — so radios use IQ baseband.
+ *    bit '1' → MARK  : LO + 150 kHz  =  434.070 MHz
+ *    bit '0' → SPACE : LO +  50 kHz  =  433.970 MHz
  *
- * ════════════════════════════════════════════════════════════════════════════
- * LESSON 2 — IQ baseband (recap)
- * ════════════════════════════════════════════════════════════════════════════
+ *  The receiver asks "which frequency is louder?" — not "how loud?".
+ *  Amplitude variations (fading, distance changes) don't matter at all,
+ *  because we're comparing two frequencies in the same channel at the
+ *  same time.  This is why FM radio sounds clean even at the edge of
+ *  coverage, while AM fades.
  *
- *  ANY RF signal can be described by two low-rate numbers I(t) and Q(t):
- *
- *    v(t) = I(t)·cos(2π·f_LO·t)  −  Q(t)·sin(2π·f_LO·t)
- *
- *  The AD9361 multiplies your I/Q samples by the LO internally (up-conversion).
- *  You only supply samples at 2.304 Msps; the chip handles the 434 MHz part.
- *
- * ════════════════════════════════════════════════════════════════════════════
- * LESSON 3 — DDS (recap)
- * ════════════════════════════════════════════════════════════════════════════
- *
- *  The FPGA DDS generates I(t) = cos(2π·f·t), Q(t) = sin(2π·f·t) in hardware.
- *  We toggle its amplitude (scale 0.9 ↔ 0.0) to encode bits.
+ *  Naming convention (inherited from landline modems):
+ *    MARK  = '1'  (the "marking" state — idle and stop bits)
+ *    SPACE = '0'  (the "spacing" state — start bits)
  *
  * ════════════════════════════════════════════════════════════════════════════
- * LESSON 7 — On-Off Keying (OOK)
+ * LESSON 10 — How we generate two tones with the AD9361 DDS
  * ════════════════════════════════════════════════════════════════════════════
  *
- *  The simplest digital modulation:
+ *  The FPGA DDS has two independent tone generators per I/Q path:
+ *    F1 (altvoltage0 / altvoltage2) — we assign to MARK  (150 kHz)
+ *    F2 (altvoltage1 / altvoltage3) — we assign to SPACE ( 50 kHz)
  *
- *    bit = 1  →  DDS scale = 0.9  →  carrier radiates   (RF power ON)
- *    bit = 0  →  DDS scale = 0.0  →  carrier silent      (RF power OFF)
+ *  To transmit MARK:  set F1 scale=0.9, F2 scale=0.0
+ *  To transmit SPACE: set F1 scale=0.0, F2 scale=0.9
  *
- *  Over the air it looks like a morse-code envelope: the 434.020 MHz carrier
- *  is switched on and off at OOK_BIT_PERIOD_US intervals.
+ *  We always silence the outgoing tone before enabling the incoming one
+ *  to avoid a brief moment where both tones overlap.  The resulting
+ *  ~1 ms gap per transition is invisible at 50 bps (20 ms/bit).
+ *
+ *  Phase continuity: the DDS free-runs even when scale=0; on re-enable
+ *  it resumes at whatever phase it reached — so each bit transition has
+ *  a random phase jump.  This causes a small spectral splatter at 50 Hz
+ *  intervals.  For an educational lab link it's irrelevant.  Real-world
+ *  FSK (MSK / GMSK) maintains continuous phase across transitions.
  *
  * ════════════════════════════════════════════════════════════════════════════
- * LESSON 8 — UART framing over OOK
+ * LESSON 8 — UART framing (unchanged from OOK)
  * ════════════════════════════════════════════════════════════════════════════
  *
- *  We borrow the UART (serial port) frame format to package bytes:
+ *  [IDLE=MARK]···[START=SPACE][b0][b1]···[b7][STOP=MARK]···
  *
- *    [IDLE=1]···[START=0][b0][b1][b2][b3][b4][b5][b6][b7][STOP=1]···
- *
- *  Idle     : carrier ON  (line high — receiver knows "no data yet")
- *  Start bit: carrier OFF (falling edge — receiver aligns its clock here)
- *  Data bits: 8 bits, LSB first (b0 = bit0 of the byte)
- *  Stop bit : carrier ON  (line high — receiver confirms byte is done)
- *
- *  Each bit lasts OOK_BIT_PERIOD_US microseconds (100 ms = 10 bps here).
- *
- *  Example — 'H' = 0x48 = 0b01001000, LSB first = 0,0,0,1,0,0,1,0:
- *
- *    ‾‾‾‾|_____|‾|___|‾‾‾|‾‾‾‾‾‾
- *    idle  S  0 0 0 1 0 0 1 0  P
- *              └── b0 ──────────┘
- *    S=start(0)  P=stop(1)
+ *  Idle and stop = MARK ('1').  Start = SPACE ('0').
+ *  Bit rate: FSK_BIT_PERIOD_US µs per bit = 50 bps.
  */
 
-#define _DEFAULT_SOURCE         /* expose usleep() under -std=c11 */
+#define _DEFAULT_SOURCE
 
 #include <iio.h>
 #include <signal.h>
@@ -83,34 +74,45 @@
 static volatile bool g_running = true;
 static void on_signal(int s) { (void)s; g_running = false; }
 
-/* ── DDS on/off — toggles carrier by changing amplitude scale ───────────── */
-static void carrier_on(struct iio_channel *di, struct iio_channel *dq)
+/* ── Tone switching ─────────────────────────────────────────────────────────
+ * Always silence the departing tone FIRST to avoid momentary dual-tone.     */
+
+static void tone_mark(struct iio_channel *f1i, struct iio_channel *f1q,
+                      struct iio_channel *f2i, struct iio_channel *f2q)
 {
-    iio_channel_attr_write_double(di, "scale", 0.9);
-    iio_channel_attr_write_double(dq, "scale", 0.9);
+    iio_channel_attr_write_double(f2i, "scale", 0.0);
+    iio_channel_attr_write_double(f2q, "scale", 0.0);
+    iio_channel_attr_write_double(f1i, "scale", 0.9);
+    iio_channel_attr_write_double(f1q, "scale", 0.9);
 }
 
-static void carrier_off(struct iio_channel *di, struct iio_channel *dq)
+static void tone_space(struct iio_channel *f1i, struct iio_channel *f1q,
+                       struct iio_channel *f2i, struct iio_channel *f2q)
 {
-    iio_channel_attr_write_double(di, "scale", 0.0);
-    iio_channel_attr_write_double(dq, "scale", 0.0);
+    iio_channel_attr_write_double(f1i, "scale", 0.0);
+    iio_channel_attr_write_double(f1q, "scale", 0.0);
+    iio_channel_attr_write_double(f2i, "scale", 0.9);
+    iio_channel_attr_write_double(f2q, "scale", 0.9);
 }
 
-static void send_bit(int bit, struct iio_channel *di, struct iio_channel *dq)
+static void send_bit(int bit,
+                     struct iio_channel *f1i, struct iio_channel *f1q,
+                     struct iio_channel *f2i, struct iio_channel *f2q)
 {
-    if (bit) carrier_on(di, dq);
-    else     carrier_off(di, dq);
-    usleep(OOK_BIT_PERIOD_US);
+    if (bit) tone_mark (f1i, f1q, f2i, f2q);
+    else     tone_space(f1i, f1q, f2i, f2q);
+    usleep(FSK_BIT_PERIOD_US);
 }
 
-/* UART frame: start(0), 8 data bits LSB first, stop(1) */
+/* UART frame: start(SPACE=0), 8 data bits LSB first, stop(MARK=1) */
 static void send_byte(unsigned char c,
-                      struct iio_channel *di, struct iio_channel *dq)
+                      struct iio_channel *f1i, struct iio_channel *f1q,
+                      struct iio_channel *f2i, struct iio_channel *f2q)
 {
-    send_bit(0, di, dq);                        /* start bit */
+    send_bit(0, f1i, f1q, f2i, f2q);           /* start: SPACE */
     for (int i = 0; i < 8; i++)
-        send_bit((c >> i) & 1, di, dq);
-    send_bit(1, di, dq);                        /* stop bit  */
+        send_bit((c >> i) & 1, f1i, f1q, f2i, f2q);
+    send_bit(1, f1i, f1q, f2i, f2q);           /* stop:  MARK  */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -122,10 +124,10 @@ int main(void)
 
     fprintf(stderr,
         "\n╔══════════════════════════════════════════════════════════╗\n"
-        "║  SDR_Link — OOK Transmitter (Zedboard + AD9361)          ║\n"
+        "║  SDR_Link — 2-FSK Transmitter (Zedboard + AD9361)        ║\n"
         "╚══════════════════════════════════════════════════════════╝\n\n");
 
-    /* ── Step 1: Open the local IIO context ──────────────────────────────── */
+    /* ── Step 1: Open IIO context ───────────────────────────────────────── */
     fprintf(stderr, "[ 1/4 ] Opening IIO context...\n");
     struct iio_context *ctx = iio_create_local_context();
     if (!ctx) {
@@ -157,11 +159,15 @@ int main(void)
     iio_channel_attr_write_longlong(tx_phy, "hardwaregain",       -TX_ATTENUATION_MDB / 1000);
 
     fprintf(stderr, "        LO        : %.3f MHz\n", CARRIER_FREQ_HZ / 1e6);
-    fprintf(stderr, "        Bandwidth : %lld kHz\n", RF_BANDWIDTH_HZ / 1000);
-    fprintf(stderr, "        TX power  : -%d dB\n\n", TX_ATTENUATION_MDB / 1000);
+    fprintf(stderr, "        MARK      : %.3f MHz  (bit '1', +150 kHz)\n",
+            (CARRIER_FREQ_HZ + FSK_TONE_MARK_HZ) / 1e6);
+    fprintf(stderr, "        SPACE     : %.3f MHz  (bit '0',  +50 kHz)\n",
+            (CARRIER_FREQ_HZ + FSK_TONE_SPACE_HZ) / 1e6);
+    fprintf(stderr, "        Bit rate  : %d bps (%d ms/bit)\n\n",
+            1000000 / FSK_BIT_PERIOD_US, FSK_BIT_PERIOD_US / 1000);
 
-    /* ── Step 3: Configure hardware DDS ─────────────────────────────────── */
-    fprintf(stderr, "[ 3/4 ] Configuring DDS...\n");
+    /* ── Step 3: Configure DDS — two tones, F1=MARK, F2=SPACE ──────────── */
+    fprintf(stderr, "[ 3/4 ] Configuring DDS (F1=MARK, F2=SPACE)...\n");
     struct iio_device *dds = iio_context_find_device(ctx, TX_DDS_DEVICE);
     if (!dds) {
         fprintf(stderr, "ERROR: %s not found\n", TX_DDS_DEVICE);
@@ -169,73 +175,76 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    struct iio_channel *dds_i = iio_device_find_channel(dds, "altvoltage0", true);
-    struct iio_channel *dds_q = iio_device_find_channel(dds, "altvoltage2", true);
-    if (!dds_i || !dds_q) {
-        fprintf(stderr, "ERROR: DDS tone channels not found\n");
+    /* F1: MARK at 150 kHz — I=altvoltage0 (0°), Q=altvoltage2 (90°) */
+    struct iio_channel *f1i = iio_device_find_channel(dds, "altvoltage0", true);
+    struct iio_channel *f1q = iio_device_find_channel(dds, "altvoltage2", true);
+    /* F2: SPACE at  50 kHz — I=altvoltage1 (0°), Q=altvoltage3 (90°) */
+    struct iio_channel *f2i = iio_device_find_channel(dds, "altvoltage1", true);
+    struct iio_channel *f2q = iio_device_find_channel(dds, "altvoltage3", true);
+    if (!f1i || !f1q || !f2i || !f2q) {
+        fprintf(stderr, "ERROR: DDS channels not found\n");
         iio_context_destroy(ctx);
         return EXIT_FAILURE;
     }
 
-    iio_channel_attr_write_longlong(dds_i, "frequency", DDS_TONE_OFFSET_HZ);
-    iio_channel_attr_write_longlong(dds_q, "frequency", DDS_TONE_OFFSET_HZ);
-    iio_channel_attr_write_longlong(dds_i, "phase",     0);
-    iio_channel_attr_write_longlong(dds_q, "phase",     90000);
-    iio_channel_attr_write_longlong(dds_i, "raw",       1);
-    iio_channel_attr_write_longlong(dds_q, "raw",       1);
+    /* Frequencies and phases (phase in millidegrees) */
+    iio_channel_attr_write_longlong(f1i, "frequency", FSK_TONE_MARK_HZ);
+    iio_channel_attr_write_longlong(f1q, "frequency", FSK_TONE_MARK_HZ);
+    iio_channel_attr_write_longlong(f1i, "phase",     0);
+    iio_channel_attr_write_longlong(f1q, "phase",     90000);
 
-    fprintf(stderr, "        Tone      : %.3f MHz\n", TONE_FREQ_HZ / 1e6);
-    fprintf(stderr, "        Bit rate  : %d bps (%d ms/bit)\n\n",
-            1000000 / OOK_BIT_PERIOD_US, OOK_BIT_PERIOD_US / 1000);
+    iio_channel_attr_write_longlong(f2i, "frequency", FSK_TONE_SPACE_HZ);
+    iio_channel_attr_write_longlong(f2q, "frequency", FSK_TONE_SPACE_HZ);
+    iio_channel_attr_write_longlong(f2i, "phase",     0);
+    iio_channel_attr_write_longlong(f2q, "phase",     90000);
 
-    /* ── Step 4: OOK transmission loop ──────────────────────────────────────
+    /* Enable all four DDS outputs (scale controls which is active) */
+    iio_channel_attr_write_longlong(f1i, "raw", 1);
+    iio_channel_attr_write_longlong(f1q, "raw", 1);
+    iio_channel_attr_write_longlong(f2i, "raw", 1);
+    iio_channel_attr_write_longlong(f2q, "raw", 1);
+
+    fprintf(stderr, "        F1 (MARK) : %lld kHz  I=altv0 Q=altv2\n",
+            FSK_TONE_MARK_HZ / 1000);
+    fprintf(stderr, "        F2 (SPACE): %lld kHz  I=altv1 Q=altv3\n\n",
+            FSK_TONE_SPACE_HZ / 1000);
+
+    /* ── Step 4: Transmit loop ───────────────────────────────────────────
      *
-     * Idle = carrier ON (1).  Each character is UART-framed:
-     *   start(0) + 8 data bits LSB-first + stop(1)
-     * After the full message: 2 s of carrier OFF, then repeat.
-     *
-     * The stderr log prints the bit pattern for each character so you can
-     * cross-check it against what the RX decodes.
+     * Idle = MARK ('1').  Each character uses UART framing:
+     *   SPACE start bit + 8 data bits + MARK stop bit.
+     * Inter-message gap: stay at MARK (idle high — same as OOK lesson).
      */
-    fprintf(stderr, "[ 4/4 ] Transmitting OOK — press Ctrl-C to stop.\n\n");
+    fprintf(stderr, "[ 4/4 ] Transmitting FSK — press Ctrl-C to stop.\n\n");
 
-    carrier_on(dds_i, dds_q);          /* line idle = high */
-    usleep(500000);                    /* 500 ms idle so RX can lock before first bit */
+    tone_mark(f1i, f1q, f2i, f2q);     /* idle = MARK */
+    usleep(500000);                     /* 500 ms so RX locks before first bit */
 
     int msg_num = 0;
     while (g_running) {
         fprintf(stderr, "── TX msg #%d ──────────────────────────────\n", ++msg_num);
 
-        for (const char *p = OOK_MESSAGE; *p && g_running; p++) {
+        for (const char *p = FSK_MESSAGE; *p && g_running; p++) {
             unsigned char c = (unsigned char)*p;
-
-            /* print the UART frame we're about to send */
-            fprintf(stderr, "  '%c' 0x%02X  [0|", (c >= 32 && c < 127) ? c : '.', c);
+            fprintf(stderr, "  '%c' 0x%02X  [S|",
+                    (c >= 32 && c < 127) ? c : '.', c);
             for (int i = 0; i < 8; i++)
                 fprintf(stderr, "%d", (c >> i) & 1);
-            fprintf(stderr, "|1]  %d ms\n",
-                    10 * OOK_BIT_PERIOD_US / 1000);
-
-            send_byte(c, dds_i, dds_q);
+            fprintf(stderr, "|M]\n");
+            send_byte(c, f1i, f1q, f2i, f2q);
         }
 
-        /*
-         * Inter-message gap: carrier stays ON (idle = HIGH).
-         *
-         * UART idles HIGH.  If we go LOW here, the RX sees a falling edge
-         * immediately after the stop bit and decodes 2 s of silence as a
-         * garbage byte.  Staying HIGH means the gap is just a long idle
-         * period — the RX does nothing until the next start bit (falling edge).
-         */
-        fprintf(stderr, "  [2.5 s idle — carrier ON]\n\n");
+        /* Inter-message gap: carrier stays at MARK (idle = MARK = '1') */
+        fprintf(stderr, "  [2.5 s idle at MARK]\n\n");
         for (int i = 0; i < 25 && g_running; i++)
             usleep(100000);
     }
 
-    /* ── Shutdown ─────────────────────────────────────────────────────────── */
-    carrier_off(dds_i, dds_q);
-    iio_channel_attr_write_longlong(dds_i, "raw", 0);
-    iio_channel_attr_write_longlong(dds_q, "raw", 0);
+    /* ── Shutdown ─────────────────────────────────────────────────────── */
+    iio_channel_attr_write_longlong(f1i, "raw", 0);
+    iio_channel_attr_write_longlong(f1q, "raw", 0);
+    iio_channel_attr_write_longlong(f2i, "raw", 0);
+    iio_channel_attr_write_longlong(f2q, "raw", 0);
     iio_context_destroy(ctx);
     fprintf(stderr, "\nStopped.\n");
     return EXIT_SUCCESS;
