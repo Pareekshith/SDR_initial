@@ -176,7 +176,11 @@ int main(void)
     int         buf_cnt  = 0;       /* buffers counted within current state   */
     int         bit_cnt  = 0;       /* data bits collected so far             */
     uint8_t     dbyte    = 0;       /* accumulates data bits                  */
-    int         prev_lvl = 1;       /* previous level (idle = 1)              */
+    int         prev_lvl = 0;       /* previous level — start at 0, not 1:   */
+                                    /*   if 1, first noise buffer fakes a     */
+                                    /*   falling edge and corrupt-starts the  */
+                                    /*   decoder before TX even transmits.    */
+    int         consec_hi = 0;      /* consecutive buffers where lvl==1       */
     int         stat_cnt = 0;       /* counter for status display             */
     float       last_dbfs = -99.0f;
 
@@ -212,15 +216,33 @@ int main(void)
         int   lvl  = (dbfs > OOK_THRESHOLD_DBFS) ? 1 : 0;
         last_dbfs  = dbfs;
 
+        /*
+         * Track consecutive high (ON) buffers BEFORE updating prev_lvl.
+         * We use this in S_IDLE to require a minimum confirmed idle period
+         * before accepting a falling edge as a start bit.
+         *
+         * Why: UART data contains many 1→0 transitions inside bytes.
+         * A stop bit lasts 100 ms (10 buffers), so we require ≥3 consecutive
+         * ON buffers (30 ms) before triggering.  This passes every genuine
+         * stop-bit→start-bit boundary and blocks mid-data false triggers.
+         */
+        int prev_consec = consec_hi;
+        if (lvl == 1) consec_hi++;
+        else          consec_hi = 0;
+
         /* ── UART decoder state machine ────────────────────────────────── */
         switch (state) {
 
         case S_IDLE:
             /*
-             * Wait for a falling edge: prev_lvl=1 (idle/ON) → lvl=0 (OFF).
-             * That falling edge is the START BIT.
+             * Wait for a CONFIRMED falling edge:
+             *   - prev_lvl == 1 and lvl == 0  (the edge itself)
+             *   - prev_consec >= 3             (≥30 ms of confirmed idle before it)
+             *
+             * Without the prev_consec guard, any 1→0 data transition triggers
+             * a false start and the decoder drifts forever.
              */
-            if (prev_lvl == 1 && lvl == 0) {
+            if (prev_lvl == 1 && lvl == 0 && prev_consec >= 3) {
                 buf_cnt = 0;
                 state   = S_START;
             }
@@ -290,7 +312,7 @@ int main(void)
 
         /* ── Status display (stderr) — every STATUS_INTERVAL buffers ───── */
         if (++stat_cnt >= STATUS_INTERVAL) {
-            fprintf(stderr, "\r  [%s] %6.1f dBFS  %s  ",
+            fprintf(stderr, "  [%s] %6.1f dBFS  %s\n",
                     state_name[state],
                     last_dbfs,
                     lvl ? "\033[32m▓▓▓\033[0m" : "\033[31m░░░\033[0m");

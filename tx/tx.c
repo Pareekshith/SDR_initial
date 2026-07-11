@@ -200,6 +200,7 @@ int main(void)
     fprintf(stderr, "[ 4/4 ] Transmitting OOK — press Ctrl-C to stop.\n\n");
 
     carrier_on(dds_i, dds_q);          /* line idle = high */
+    usleep(500000);                    /* 500 ms idle so RX can lock before first bit */
 
     int msg_num = 0;
     while (g_running) {
@@ -218,12 +219,17 @@ int main(void)
             send_byte(c, dds_i, dds_q);
         }
 
-        /* 2-second inter-message gap: carrier OFF */
-        fprintf(stderr, "  [2 s gap]\n\n");
-        carrier_off(dds_i, dds_q);
-        for (int i = 0; i < 20 && g_running; i++)
+        /*
+         * Inter-message gap: carrier stays ON (idle = HIGH).
+         *
+         * UART idles HIGH.  If we go LOW here, the RX sees a falling edge
+         * immediately after the stop bit and decodes 2 s of silence as a
+         * garbage byte.  Staying HIGH means the gap is just a long idle
+         * period — the RX does nothing until the next start bit (falling edge).
+         */
+        fprintf(stderr, "  [2.5 s idle — carrier ON]\n\n");
+        for (int i = 0; i < 25 && g_running; i++)
             usleep(100000);
-        carrier_on(dds_i, dds_q);      /* return to idle */
     }
 
     /* ── Shutdown ─────────────────────────────────────────────────────────── */
