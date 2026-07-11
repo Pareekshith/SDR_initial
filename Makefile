@@ -82,8 +82,8 @@ ZED_LDFLAGS  = -liio -lm -lrt
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-.PHONY: all help check-sysroot tx-build tx-run rx-build rx-deploy rx-run \
-        rx-deploy-via-zed setup-pluto-ssh
+.PHONY: all help check-sysroot tx-build tx-run tx-cw-build tx-cw-run \
+        rx-build rx-deploy rx-run rx-deploy-via-zed setup-pluto-ssh
 
 all: help
 
@@ -114,6 +114,24 @@ tx-build:
 tx-run:
 	@echo "  Starting tone transmitter on ZedBoard..."
 	ssh -t root@$(ZEDBOARD_IP) '/usr/local/bin/tx'
+
+# ── TX Step 1: CW tone via IIO DMA buffer ────────────────────────────────────
+tx-cw-build:
+	@echo "────────────────────────────────────────────────────"
+	@echo "  Uploading tx_cw.c to ZedBoard ($(ZEDBOARD_IP))..."
+	@echo "────────────────────────────────────────────────────"
+	ssh root@$(ZEDBOARD_IP) 'mkdir -p /tmp/sdrlink/common'
+	cat tx/tx_cw.c         | ssh root@$(ZEDBOARD_IP) 'cat > /tmp/sdrlink/tx_cw.c'
+	cat common/rf_params.h | ssh root@$(ZEDBOARD_IP) 'cat > /tmp/sdrlink/common/rf_params.h'
+	@echo ""
+	@echo "  Compiling on ZedBoard..."
+	ssh root@$(ZEDBOARD_IP) \
+	    'cd /tmp/sdrlink && $(ZED_CC) $(ZED_CFLAGS) -I./common -o /usr/local/bin/tx_cw tx_cw.c $(ZED_LDFLAGS) \
+	     && echo "  OK: /usr/local/bin/tx_cw" && file /usr/local/bin/tx_cw'
+
+tx-cw-run:
+	@echo "  Starting CW DMA transmitter on ZedBoard..."
+	ssh -t root@$(ZEDBOARD_IP) '/usr/local/bin/tx_cw'
 
 # ── RX: cross-compile for Pluto+ on the laptop ───────────────────────────────
 rx-build: check-sysroot

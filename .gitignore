@@ -1,6 +1,7 @@
 # Compiled binaries
 rx/rx
 tx/tx
+tx/tx_cw
 
 # Cross-compilation sysroot (symlink to ../AD9361_FM_radio/arm-sysroot)
 arm-sysroot
