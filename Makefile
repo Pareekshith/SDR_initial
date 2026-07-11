@@ -78,7 +78,7 @@ PLUTO_LDFLAGS = -nostdlib \
 # ── ZedBoard native compile flags ────────────────────────────────────────────
 ZED_CC       = gcc
 ZED_CFLAGS   = -Wall -O2 -std=c11
-ZED_LDFLAGS  = -liio -lm
+ZED_LDFLAGS  = -liio -lm -lrt
 
 # ─────────────────────────────────────────────────────────────────────────────
 

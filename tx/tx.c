@@ -39,8 +39,8 @@
  *  To transmit SPACE: set F1 scale=0.0, F2 scale=0.9
  *
  *  We always silence the outgoing tone before enabling the incoming one
- *  to avoid a brief moment where both tones overlap.  The resulting
- *  ~1 ms gap per transition is invisible at 50 bps (20 ms/bit).
+ *  to avoid a brief moment where both tones overlap.  The four IIO sysfs
+ *  writes take ~4 ms total — comfortably inside the 50 ms bit period.
  *
  *  Phase continuity: the DDS free-runs even when scale=0; on re-enable
  *  it resumes at whatever phase it reached — so each bit transition has
@@ -55,7 +55,7 @@
  *  [IDLE=MARK]···[START=SPACE][b0][b1]···[b7][STOP=MARK]···
  *
  *  Idle and stop = MARK ('1').  Start = SPACE ('0').
- *  Bit rate: FSK_BIT_PERIOD_US µs per bit = 50 bps.
+ *  Bit rate: FSK_BIT_PERIOD_US µs per bit = 20 bps.
  */
 
 #define _DEFAULT_SOURCE
@@ -67,6 +67,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../common/rf_params.h"
@@ -95,24 +96,42 @@ static void tone_space(struct iio_channel *f1i, struct iio_channel *f1q,
     iio_channel_attr_write_double(f2q, "scale", 0.9);
 }
 
-static void send_bit(int bit,
+/* Advance absolute deadline by us microseconds. */
+static void ts_add_us(struct timespec *ts, long us)
+{
+    ts->tv_nsec += us * 1000L;
+    if (ts->tv_nsec >= 1000000000L) {
+        ts->tv_nsec -= 1000000000L;
+        ts->tv_sec++;
+    }
+}
+
+/*
+ * Set tone and sleep until the absolute deadline *next, then advance *next
+ * by one bit period.  Because the deadline is absolute (not relative to
+ * "now"), any time spent in IIO writes is subtracted from the sleep — the
+ * bit period seen by the receiver stays exactly FSK_BIT_PERIOD_US regardless
+ * of how long the four sysfs writes take.
+ */
+static void send_bit(int bit, struct timespec *next,
                      struct iio_channel *f1i, struct iio_channel *f1q,
                      struct iio_channel *f2i, struct iio_channel *f2q)
 {
     if (bit) tone_mark (f1i, f1q, f2i, f2q);
     else     tone_space(f1i, f1q, f2i, f2q);
-    usleep(FSK_BIT_PERIOD_US);
+    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, next, NULL);
+    ts_add_us(next, FSK_BIT_PERIOD_US);
 }
 
 /* UART frame: start(SPACE=0), 8 data bits LSB first, stop(MARK=1) */
-static void send_byte(unsigned char c,
+static void send_byte(unsigned char c, struct timespec *next,
                       struct iio_channel *f1i, struct iio_channel *f1q,
                       struct iio_channel *f2i, struct iio_channel *f2q)
 {
-    send_bit(0, f1i, f1q, f2i, f2q);           /* start: SPACE */
+    send_bit(0, next, f1i, f1q, f2i, f2q);     /* start: SPACE */
     for (int i = 0; i < 8; i++)
-        send_bit((c >> i) & 1, f1i, f1q, f2i, f2q);
-    send_bit(1, f1i, f1q, f2i, f2q);           /* stop:  MARK  */
+        send_bit((c >> i) & 1, next, f1i, f1q, f2i, f2q);
+    send_bit(1, next, f1i, f1q, f2i, f2q);     /* stop:  MARK  */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -224,6 +243,13 @@ int main(void)
     while (g_running) {
         fprintf(stderr, "── TX msg #%d ──────────────────────────────\n", ++msg_num);
 
+        /* Anchor the absolute bit-clock to "right now + one bit period".
+         * send_bit() sleeps to this deadline then advances it, so consecutive
+         * bits are exactly FSK_BIT_PERIOD_US apart regardless of IIO latency. */
+        struct timespec next;
+        clock_gettime(CLOCK_MONOTONIC, &next);
+        ts_add_us(&next, FSK_BIT_PERIOD_US);
+
         for (const char *p = FSK_MESSAGE; *p && g_running; p++) {
             unsigned char c = (unsigned char)*p;
             fprintf(stderr, "  '%c' 0x%02X  [S|",
@@ -231,7 +257,7 @@ int main(void)
             for (int i = 0; i < 8; i++)
                 fprintf(stderr, "%d", (c >> i) & 1);
             fprintf(stderr, "|M]\n");
-            send_byte(c, f1i, f1q, f2i, f2q);
+            send_byte(c, &next, f1i, f1q, f2i, f2q);
         }
 
         /* Inter-message gap: carrier stays at MARK (idle = MARK = '1') */
