@@ -42,8 +42,8 @@
  *
  *  This is identical to the DFT at bin k = f_target × N / f_s.
  *
- *  Our tones land on EXACT bins (bin 500 for 50 kHz, bin 1500 for 150 kHz,
- *  since f_s/N = 2304000/23040 = 100 Hz).  No spectral leakage → perfect
+ *  Our 1 ms decimated windows have 1 kHz bin spacing, so the tones land on
+ *  exact bins 50 and 150.  No spectral leakage gives clean discrimination
  *  discrimination between MARK and SPACE.
  *
  *  We run Goertzel on I and Q separately and sum the powers.  For a
@@ -57,8 +57,8 @@
  *  [IDLE=MARK]···[START=SPACE][b0]···[b7][STOP=MARK]···
  *
  *  Edge detection: MARK→SPACE  =  start bit.
- *  Half-bit centering + bit-period sampling — same state machine as OOK,
- *  now with FSK_BIT_PERIOD_BUF = 5 (50 ms/bit = 20 bps).
+ *  This revision makes one tone decision per 1 ms window and clocks the UART
+ *  in those sample-time ticks.  Buffer return time is no longer the bit clock.
  */
 
 #define _DEFAULT_SOURCE         /* expose M_PI under -std=c11 */
@@ -74,11 +74,24 @@
 
 #include "../common/rf_params.h"
 
-#define BUFFER_SAMPLES   23040          /* 10 ms at 2.304 Msps               */
-#define STATUS_INTERVAL  50             /* print status every 50 buf = 500 ms */
+#define BUFFER_SAMPLES          23040   /* 10 ms at 2.304 Msps               */
+#define WINDOWS_PER_BUFFER         10   /* ten 1 ms decisions per DMA block  */
+#define WINDOW_INPUT_SAMPLES     2304   /* original ADC samples per 1 ms     */
+#define DECIMATION_FACTOR           4   /* analyze every fourth ADC sample   */
+#define WINDOW_ANALYSIS_SAMPLES   576   /* 2304 / 4                          */
+#define ANALYSIS_SAMPLE_RATE  576000LL  /* 2.304 Msps / 4                    */
+#define UART_BIT_TICKS             50   /* 50 × 1 ms = 50 ms                 */
+#define UART_HALF_BIT_TICKS        25   /* sample at the bit centre          */
+#define UART_MIN_IDLE_TICKS        15   /* reject edges without prior MARK   */
+#define STATUS_INTERVAL_TICKS     500   /* status every 500 ms               */
 
 static volatile bool g_running = true;
 static void on_signal(int s) { (void)s; g_running = false; }
+#define setup_signals() do { \
+    signal(SIGINT,  on_signal); \
+    signal(SIGTERM, on_signal); \
+    signal(SIGHUP,  on_signal); \
+} while (0)
 
 typedef enum { S_IDLE, S_START, S_DATA, S_STOP } ook_state_t;
 static const char *state_name[] = { "IDLE ", "START", "DATA ", "STOP " };
@@ -102,6 +115,17 @@ static int           pre_cnt  = 0;
 static int           data_len = 0;
 static int           data_pos = 0;
 static uint8_t       data_buf[256];
+
+/* A broken UART byte also breaks the RF-frame byte sequence.  Do not let
+ * preamble bytes collected before a framing error contribute to a later
+ * (and therefore false) SYNC decision. */
+static void frame_reset(void)
+{
+    fs_state = FS_HUNT;
+    pre_cnt  = 0;
+    data_len = 0;
+    data_pos = 0;
+}
 
 static void on_byte(uint8_t byte)
 {
@@ -167,11 +191,8 @@ static void on_byte(uint8_t byte)
  * I = *(int16_t *)(ptr + 0),  Q = *(int16_t *)(ptr + 2)
  */
 static float goertzel_power(const char *base, ptrdiff_t step, int n,
-                             float target_hz, float sample_rate)
+                            float coefficient)
 {
-    float omega = 2.0f * (float)M_PI * target_hz / sample_rate;
-    float coeff = 2.0f * cosf(omega);          /* computed once per call */
-
     float sI1 = 0.0f, sI2 = 0.0f;             /* IIR state for I channel */
     float sQ1 = 0.0f, sQ2 = 0.0f;             /* IIR state for Q channel */
 
@@ -181,16 +202,16 @@ static float goertzel_power(const char *base, ptrdiff_t step, int n,
         float I = (float)iq[0];
         float Q = (float)iq[1];
 
-        float sI0 = coeff * sI1 - sI2 + I;
+        float sI0 = coefficient * sI1 - sI2 + I;
         sI2 = sI1;  sI1 = sI0;
 
-        float sQ0 = coeff * sQ1 - sQ2 + Q;
+        float sQ0 = coefficient * sQ1 - sQ2 + Q;
         sQ2 = sQ1;  sQ1 = sQ0;
     }
 
     /* |X(k)|² for each channel, then sum */
-    float pI = sI1*sI1 + sI2*sI2 - coeff*sI1*sI2;
-    float pQ = sQ1*sQ1 + sQ2*sQ2 - coeff*sQ1*sQ2;
+    float pI = sI1*sI1 + sI2*sI2 - coefficient*sI1*sI2;
+    float pQ = sQ1*sQ1 + sQ2*sQ2 - coefficient*sQ1*sQ2;
     return pI + pQ;
 }
 
@@ -198,13 +219,10 @@ static float goertzel_power(const char *base, ptrdiff_t step, int n,
 
 int main(void)
 {
-    signal(SIGINT,  on_signal);
-    signal(SIGTERM, on_signal);
+    setup_signals();
 
     fprintf(stderr,
-        "\n╔══════════════════════════════════════════════════════════╗\n"
-        "║  SDR_Link — 2-FSK Receiver / Decoder (Pluto+ / AD9361)   ║\n"
-        "╚══════════════════════════════════════════════════════════╝\n\n");
+        "\n== SDR_Link: 2-FSK Receiver / Decoder (Pluto+ / AD9361) ==\n\n");
 
     /* ── Step 1: Open IIO context ───────────────────────────────────────── */
     fprintf(stderr, "[ 1/4 ] Opening IIO context...\n");
@@ -238,7 +256,7 @@ int main(void)
      * After down-conversion:
      *   MARK  (434.070 MHz)  →  150 kHz in baseband
      *   SPACE (433.970 MHz)  →   50 kHz in baseband
-     * Both land on exact Goertzel bins (bin 1500 and bin 500).
+     * In each 1 ms analysis window they land on exact bins 150 and 50.
      */
     iio_channel_attr_write_longlong(lo_rx,  "frequency",          CARRIER_FREQ_HZ);
     iio_channel_attr_write_longlong(rx_phy, "rf_bandwidth",       RF_BANDWIDTH_HZ);
@@ -253,14 +271,15 @@ int main(void)
             CARRIER_FREQ_HZ / 1e6);
     fprintf(stderr, "        MARK bin  : %.0f kHz  (Goertzel bin %lld)\n",
             FSK_TONE_MARK_HZ / 1e3,
-            FSK_TONE_MARK_HZ * BUFFER_SAMPLES / SAMPLE_RATE_HZ);
+            FSK_TONE_MARK_HZ * WINDOW_ANALYSIS_SAMPLES / ANALYSIS_SAMPLE_RATE);
     fprintf(stderr, "        SPACE bin : %.0f kHz  (Goertzel bin %lld)\n",
             FSK_TONE_SPACE_HZ / 1e3,
-            FSK_TONE_SPACE_HZ * BUFFER_SAMPLES / SAMPLE_RATE_HZ);
-    fprintf(stderr, "        Bit rate  : %d bps (%d ms/bit, %d buf/bit)\n\n",
+            FSK_TONE_SPACE_HZ * WINDOW_ANALYSIS_SAMPLES / ANALYSIS_SAMPLE_RATE);
+    fprintf(stderr, "        Bit rate  : %d bps (%d ms/bit)\n",
             1000000 / FSK_BIT_PERIOD_US,
-            FSK_BIT_PERIOD_US / 1000,
-            FSK_BIT_PERIOD_BUF);
+            FSK_BIT_PERIOD_US / 1000);
+    fprintf(stderr, "        DSP       : 1 ms windows, decimate ×%d to %.0f ksps\n\n",
+            DECIMATION_FACTOR, ANALYSIS_SAMPLE_RATE / 1000.0);
 
     /* ── Step 3: Enable IQ channels and create DMA buffer ──────────────── */
     fprintf(stderr, "[ 3/4 ] Creating RX buffer...\n");
@@ -285,12 +304,12 @@ int main(void)
 
     /* ── Step 4: FSK decoder loop ────────────────────────────────────────
      *
-     * Each buffer iteration (10 ms):
+     * Each buffer iteration (10 ms) contains ten 1 ms decisions:
      *   1. Refill buffer (DMA from ADC)
-     *   2. Goertzel at 150 kHz → P_mark
-     *   3. Goertzel at  50 kHz → P_space
-     *   4. lvl = (P_mark > P_space) ? 1 : 0
-     *   5. UART state machine — identical to OOK version
+     *   2. Split it into ten windows
+     *   3. Retain every fourth sample in each window (576 ksps effective)
+     *   4. Compare 150 kHz MARK and 50 kHz SPACE power
+     *   5. Advance the UART clock by exactly one captured millisecond
      */
     fprintf(stderr, "[ 4/4 ] Listening for FSK on %.3f–%.3f MHz — Ctrl-C to stop.\n\n",
             (CARRIER_FREQ_HZ + FSK_TONE_SPACE_HZ) / 1e6,
@@ -299,11 +318,11 @@ int main(void)
     fprintf(stderr, "  ─────────────────────────────────────────────────────────────\n");
 
     ook_state_t state    = S_IDLE;
-    int         buf_cnt  = 0;
+    int         tick_cnt = 0;
     int         bit_cnt  = 0;
     uint8_t     dbyte    = 0;
     int         prev_lvl = 0;      /* 0 = SPACE, 1 = MARK; start at SPACE   */
-    int         consec_hi = 0;     /* consecutive MARK buffers               */
+    int         consec_hi = 0;     /* consecutive 1 ms MARK decisions        */
     int         stat_cnt  = 0;
     float       last_dp   = 0.0f;  /* last ΔP = 10·log10(P_mark/P_space) dB */
     int         last_lvl  = 0;
@@ -314,6 +333,14 @@ int main(void)
     fprintf(stderr, "  ─────────────────────────────────────────────────────────────\n");
     fflush(stderr);
 
+    /* Frequencies and sample rate never change, so cosine belongs outside
+     * the real-time loop.  Decimation by four changes the analysis rate but
+     * not the physical tone frequencies. */
+    const float mark_coeff = 2.0f * cosf(2.0f * (float)M_PI *
+        (float)FSK_TONE_MARK_HZ / (float)ANALYSIS_SAMPLE_RATE);
+    const float space_coeff = 2.0f * cosf(2.0f * (float)M_PI *
+        (float)FSK_TONE_SPACE_HZ / (float)ANALYSIS_SAMPLE_RATE);
+
     while (g_running) {
 
         /* ── Refill DMA buffer ─────────────────────────────────────────── */
@@ -323,50 +350,53 @@ int main(void)
             break;
         }
 
-        /* ── Goertzel at both FSK tones ────────────────────────────────── */
+        /* ── Ten decimated 1 ms tone decisions ────────────────────────── */
         const char *base = iio_buffer_first(buf, rx_i);
         ptrdiff_t   step = iio_buffer_step(buf);
 
-        float pm = goertzel_power(base, step, BUFFER_SAMPLES,
-                                  (float)FSK_TONE_MARK_HZ,  (float)SAMPLE_RATE_HZ);
-        float ps = goertzel_power(base, step, BUFFER_SAMPLES,
-                                  (float)FSK_TONE_SPACE_HZ, (float)SAMPLE_RATE_HZ);
+        for (int window = 0; window < WINDOWS_PER_BUFFER; window++) {
+            const char *window_start =
+                base + (ptrdiff_t)window * WINDOW_INPUT_SAMPLES * step;
+            float pm = goertzel_power(window_start,
+                                      step * DECIMATION_FACTOR,
+                                      WINDOW_ANALYSIS_SAMPLES, mark_coeff);
+            float ps = goertzel_power(window_start,
+                                      step * DECIMATION_FACTOR,
+                                      WINDOW_ANALYSIS_SAMPLES, space_coeff);
+            int   lvl = (pm > ps) ? 1 : 0;
+            float dp  = 10.0f * log10f((pm + 1e-10f) / (ps + 1e-10f));
+            last_dp   = dp;
+            last_lvl  = lvl;
 
-        /*
-         * Frequency decision: which tone is louder?
-         * The 1e-10 guard prevents log10(0) on pure silence.
-         */
-        int   lvl = (pm > ps) ? 1 : 0;
-        float dp  = 10.0f * log10f(pm / (ps + 1e-10f));   /* ΔP in dB */
-        last_dp   = dp;
-        last_lvl  = lvl;
+            int prev_consec = consec_hi;
+            if (lvl == 1) consec_hi++;
+            else          consec_hi = 0;
 
-        /* ── Consecutive MARK counter (for start-bit guard) ────────────── */
-        int prev_consec = consec_hi;
-        if (lvl == 1) consec_hi++;
-        else          consec_hi = 0;
-
-        /* ── UART decoder state machine ────────────────────────────────── */
-        switch (state) {
+            /* One pass through this switch represents exactly 1 ms of
+             * captured RF time, regardless of ARM or SSH timing. */
+            switch (state) {
 
         case S_IDLE:
             /*
              * Wait for MARK→SPACE falling edge.
-             * Require FSK_MIN_IDLE_BUF consecutive MARK buffers first so
-             * mid-data MARK bits (which are only 2 buffers long) cannot
+             * Require prior MARK time so noise and mid-symbol edges cannot
              * re-trigger the decoder if a framing error drops us here.
              */
-            if (prev_lvl == 1 && lvl == 0 && prev_consec >= FSK_MIN_IDLE_BUF) {
-                buf_cnt = 0;
+            if (prev_lvl == 1 && lvl == 0 &&
+                prev_consec >= UART_MIN_IDLE_TICKS) {
+                tick_cnt = 0;
                 state   = S_START;
             }
             break;
 
         case S_START:
-            /* Wait half a bit (1 buffer = 10 ms) to land in the centre.  */
-            if (++buf_cnt == FSK_HALF_BIT_BUF) {
+            /*
+             * Confirm SPACE at the centre of the 50 ms start bit.  With 1 ms
+             * windows, the uncertainty is about ±1 ms rather than ±10 ms.
+             */
+            if (++tick_cnt == UART_HALF_BIT_TICKS) {
                 if (lvl == 0) {
-                    buf_cnt = 0;  bit_cnt = 0;  dbyte = 0;
+                    tick_cnt = 0;  bit_cnt = 0;  dbyte = 0;
                     state   = S_DATA;
                 } else {
                     state = S_IDLE;          /* glitch — abandon */
@@ -375,10 +405,9 @@ int main(void)
             break;
 
         case S_DATA:
-            /* Sample one bit every FSK_BIT_PERIOD_BUF buffers (= 20 ms). */
-            if (++buf_cnt == FSK_BIT_PERIOD_BUF) {
+            if (++tick_cnt == UART_BIT_TICKS) {
                 dbyte  |= (uint8_t)(lvl << bit_cnt);
-                buf_cnt = 0;
+                tick_cnt = 0;
                 if (++bit_cnt == 8)
                     state = S_STOP;
             }
@@ -386,31 +415,38 @@ int main(void)
 
         case S_STOP:
             /* Stop bit must be MARK ('1'). */
-            if (++buf_cnt == FSK_BIT_PERIOD_BUF) {
-                if (lvl == 1)
+            if (++tick_cnt == UART_BIT_TICKS) {
+                if (lvl == 1) {
+                    /* Show the raw UART result even before the frame layer.
+                     * Our present milestone is simply:
+                     *   55 55 55 55 D5
+                     */
+                    fprintf(stderr, "  [UART] byte=0x%02X%s\n", dbyte,
+                            dbyte == FRAME_PREAMBLE_BYTE ? "  PREAMBLE" :
+                            dbyte == FRAME_SYNC_BYTE     ? "  SYNC" : "");
                     on_byte(dbyte);          /* pass to frame state machine */
-                else
+                } else {
                     fprintf(stderr,
                             "\n  [UART ERR] stop=SPACE, partial=0x%02X\n",
                             dbyte);
+                    frame_reset();
+                }
                 state   = S_IDLE;
-                buf_cnt = 0;
+                tick_cnt = 0;
             }
             break;
-        }
+            }
 
-        prev_lvl = lvl;
+            prev_lvl = lvl;
 
-        /* ── Status display every STATUS_INTERVAL buffers (500 ms) ─────── */
-        if (++stat_cnt >= STATUS_INTERVAL) {
-            fprintf(stderr, "  [%s|%s]  %+7.1f dB  '%c'  %s\n",
-                    state_name[state],
-                    fs_name[fs_state],
-                    last_dp,
-                    last_lvl ? '1' : '0',
-                    last_lvl ? "MARK " : "SPACE");
-            fflush(stderr);
-            stat_cnt = 0;
+            if (++stat_cnt >= STATUS_INTERVAL_TICKS) {
+                fprintf(stderr, "  [%s|%s]  %+7.1f dB  '%c'  %s\n",
+                        state_name[state], fs_name[fs_state], last_dp,
+                        last_lvl ? '1' : '0',
+                        last_lvl ? "MARK " : "SPACE");
+                fflush(stderr);
+                stat_cnt = 0;
+            }
         }
     }
 

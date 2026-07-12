@@ -1,11 +1,14 @@
 # Compiled binaries
 rx/rx
+rx/rx_buffer_lab
+experiments/rx_stream_test
 tx/tx
 tx/tx_cw
+tx/tx_dma_fsk
 
 # Cross-compilation sysroot (symlink to ../AD9361_FM_radio/arm-sysroot)
 arm-sysroot
 
 # Editor / IDE
 .vscode/
-.claude/
+.claude/settings.local.json

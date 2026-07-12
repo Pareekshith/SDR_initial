@@ -104,16 +104,18 @@
 
 static volatile bool g_running = true;
 static void on_signal(int s) { (void)s; g_running = false; }
+#define setup_signals() do { \
+    signal(SIGINT,  on_signal); \
+    signal(SIGTERM, on_signal); \
+    signal(SIGHUP,  on_signal); \
+} while (0)
 
 int main(void)
 {
-    signal(SIGINT,  on_signal);
-    signal(SIGTERM, on_signal);
+    setup_signals();
 
     fprintf(stderr,
-        "\n╔══════════════════════════════════════════════════════════╗\n"
-        "║  SDR_Link — Step 1: CW via IIO DMA Buffer (Zedboard)     ║\n"
-        "╚══════════════════════════════════════════════════════════╝\n\n");
+        "\n== SDR_Link: Step 1: CW via IIO DMA Buffer (ZedBoard) ==\n\n");
 
     /* ── 1/5  Open IIO context ───────────────────────────────────────────── */
     fprintf(stderr, "[ 1/5 ] Opening IIO context...\n");

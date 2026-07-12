@@ -83,7 +83,10 @@ ZED_LDFLAGS  = -liio -lm -lrt
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: all help check-sysroot tx-build tx-run tx-cw-build tx-cw-run \
-        rx-build rx-deploy rx-run rx-deploy-via-zed setup-pluto-ssh
+        tx-dma-fsk-build tx-dma-fsk-run \
+        rx-build rx-deploy rx-run rx-deploy-via-zed \
+        rx-lab-build rx-lab-deploy rx-lab-run rx-lab-benchmark \
+        rx-stream-build rx-stream-deploy rx-stream-run setup-pluto-ssh
 
 all: help
 
@@ -133,6 +136,23 @@ tx-cw-run:
 	@echo "  Starting CW DMA transmitter on ZedBoard..."
 	ssh -t root@$(ZEDBOARD_IP) '/usr/local/bin/tx_cw'
 
+# ── TX: sample-timed 2-FSK through non-cyclic DMA buffers ────────────────────
+tx-dma-fsk-build:
+	@echo "────────────────────────────────────────────────────"
+	@echo "  Uploading sample-timed DMA FSK TX to ZedBoard..."
+	@echo "────────────────────────────────────────────────────"
+	ssh root@$(ZEDBOARD_IP) 'mkdir -p /tmp/sdrlink/common'
+	cat tx/tx_dma_fsk.c    | ssh root@$(ZEDBOARD_IP) 'cat > /tmp/sdrlink/tx_dma_fsk.c'
+	cat common/rf_params.h | ssh root@$(ZEDBOARD_IP) 'cat > /tmp/sdrlink/common/rf_params.h'
+	ssh root@$(ZEDBOARD_IP) \
+	    'cd /tmp/sdrlink && $(ZED_CC) $(ZED_CFLAGS) -I./common \
+	     -o /usr/local/bin/tx_dma_fsk tx_dma_fsk.c $(ZED_LDFLAGS) \
+	     && echo "  OK: /usr/local/bin/tx_dma_fsk" && file /usr/local/bin/tx_dma_fsk'
+
+tx-dma-fsk-run:
+	@echo "  Starting sample-timed DMA FSK transmitter on ZedBoard..."
+	ssh -t root@$(ZEDBOARD_IP) '/usr/local/bin/tx_dma_fsk'
+
 # ── RX: cross-compile for Pluto+ on the laptop ───────────────────────────────
 rx-build: check-sysroot
 	@echo "────────────────────────────────────────────────────"
@@ -156,6 +176,61 @@ rx-deploy: rx-build
 rx-run:
 	@echo "  Starting signal-strength meter on Pluto+..."
 	$(PLUTO_SSH) -t root@$(PLUTO_IP) '/tmp/rx'
+
+# ── RX teaching tool: inspect DMA buffers and tone transitions ───────────────
+rx-lab-build: check-sysroot
+	@echo "────────────────────────────────────────────────────"
+	@echo "  Cross-compiling IIO RX buffer laboratory..."
+	@echo "────────────────────────────────────────────────────"
+	$(CROSS_CC) $(PLUTO_CFLAGS) \
+	    $(SYSROOT_CRT) \
+	    -o rx/rx_buffer_lab rx/rx_buffer_lab.c \
+	    $(PLUTO_LDFLAGS) \
+	    $(SYSROOT_FINI)
+	@echo "  OK: rx/rx_buffer_lab"
+	@file rx/rx_buffer_lab
+
+rx-lab-deploy: rx-lab-build
+	@echo "  Deploying buffer laboratory to Pluto+ ($(PLUTO_IP))..."
+	# The decoder and laboratory cannot own the RX DMA device together.
+	$(PLUTO_SSH) root@$(PLUTO_IP) \
+	    'killall rx rx_buffer_lab rx_stream_test 2>/dev/null; true'
+	cat rx/rx_buffer_lab | $(PLUTO_SSH) root@$(PLUTO_IP) \
+	    'cat > /tmp/rx_buffer_lab && chmod +x /tmp/rx_buffer_lab'
+	@echo "  Deployed: /tmp/rx_buffer_lab on Pluto+"
+
+rx-lab-run:
+	@echo "  Capturing 50 × 10 ms RX buffers on Pluto+..."
+	$(PLUTO_SSH) -t root@$(PLUTO_IP) '/tmp/rx_buffer_lab 50'
+
+rx-lab-benchmark:
+	@echo "  Quietly benchmarking 500 RX buffers on Pluto+..."
+	$(PLUTO_SSH) -t root@$(PLUTO_IP) '/tmp/rx_buffer_lab --benchmark 500'
+
+# ── RX: raw libiio streaming throughput baseline ─────────────────────────────
+rx-stream-build: check-sysroot
+	@echo "────────────────────────────────────────────────────"
+	@echo "  Cross-compiling raw RX streaming baseline..."
+	@echo "────────────────────────────────────────────────────"
+	$(CROSS_CC) $(PLUTO_CFLAGS) \
+	    $(SYSROOT_CRT) \
+	    -o experiments/rx_stream_test experiments/rx_stream_test.c \
+	    $(PLUTO_LDFLAGS) \
+	    $(SYSROOT_FINI)
+	@echo "  OK: experiments/rx_stream_test"
+	@file experiments/rx_stream_test
+
+rx-stream-deploy: rx-stream-build
+	@echo "  Deploying raw RX streaming baseline to Pluto+..."
+	$(PLUTO_SSH) root@$(PLUTO_IP) \
+	    'killall rx rx_buffer_lab rx_stream_test 2>/dev/null; true'
+	cat experiments/rx_stream_test | $(PLUTO_SSH) root@$(PLUTO_IP) \
+	    'cat > /tmp/rx_stream_test && chmod +x /tmp/rx_stream_test'
+	@echo "  Deployed: /tmp/rx_stream_test on Pluto+"
+
+rx-stream-run:
+	@echo "  Running 100 × 262144-sample raw RX buffers..."
+	$(PLUTO_SSH) -t root@$(PLUTO_IP) '/tmp/rx_stream_test 262144 100'
 
 # ── RX: fallback — compile on ZedBoard (same ARM glibc), deploy to Pluto+ ────
 #
@@ -196,12 +271,19 @@ help:
 	@echo ""
 	@echo "  Build & deploy:"
 	@echo "    make tx-build             # compile tx.c ON ZedBoard (native gcc)"
+	@echo "    make tx-dma-fsk-build     # sample-timed DMA FSK on ZedBoard"
 	@echo "    make rx-deploy            # cross-compile rx.c on laptop → Pluto+"
 	@echo "    make rx-deploy-via-zed    # fallback: compile on ZedBoard → Pluto+"
+	@echo "    make rx-lab-deploy        # deploy the IIO/DMA teaching tool"
+	@echo "    make rx-stream-deploy     # deploy raw streaming throughput test"
 	@echo ""
 	@echo "  Run (open two terminals):"
 	@echo "    make tx-run               # ZedBoard transmits 434.020 MHz tone"
+	@echo "    make tx-dma-fsk-run       # ZedBoard transmits sample-timed FSK"
 	@echo "    make rx-run               # Pluto+ shows signal-strength bar"
+	@echo "    make rx-lab-run           # inspect 1 ms windows inside RX buffers"
+	@echo "    make rx-lab-benchmark     # time decoder DSP without per-buffer output"
+	@echo "    make rx-stream-run        # measure raw Pluto+ RX streaming rate"
 	@echo ""
 	@echo "  Devices:"
 	@echo "    ZedBoard : $(ZEDBOARD_IP)   (TX)"

@@ -74,6 +74,12 @@
 
 static volatile bool g_running = true;
 static void on_signal(int s) { (void)s; g_running = false; }
+/* SIGHUP arrives when the SSH session drops — same clean-shutdown path */
+#define setup_signals() do { \
+    signal(SIGINT,  on_signal); \
+    signal(SIGTERM, on_signal); \
+    signal(SIGHUP,  on_signal); \
+} while (0)
 
 /* ── Tone switching ─────────────────────────────────────────────────────────
  * Always silence the departing tone FIRST to avoid momentary dual-tone.     */
@@ -176,13 +182,10 @@ static void send_frame(const char *data, uint8_t len, struct timespec *next,
 
 int main(void)
 {
-    signal(SIGINT,  on_signal);
-    signal(SIGTERM, on_signal);
+    setup_signals();
 
     fprintf(stderr,
-        "\n╔══════════════════════════════════════════════════════════╗\n"
-        "║  SDR_Link — 2-FSK Transmitter (Zedboard + AD9361)        ║\n"
-        "╚══════════════════════════════════════════════════════════╝\n\n");
+        "\n== SDR_Link: 2-FSK Transmitter (ZedBoard + AD9361) ==\n\n");
 
     /* ── Step 1: Open IIO context ───────────────────────────────────────── */
     fprintf(stderr, "[ 1/4 ] Opening IIO context...\n");
