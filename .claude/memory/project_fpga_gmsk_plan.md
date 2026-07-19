@@ -13,11 +13,35 @@ Pari decided (2026-07-12) to implement a GMSK modulator in FPGA HDL (Verilog/VHD
 
 **Why FPGA:** Gaussian filter + phase accumulator + IQ output run at the AD9361 sample clock in the PL. Zero CPU involvement on the hot path. This is how production radios do it.
 
-## Toolchain to install (on Win11 / WSL)
+## Toolchain (actual, as installed 2026-07-12)
 
-- **Vivado ML Standard** (WebPACK license, free) — supports Zynq-7020 on ZedBoard
-- **Critical:** Check [ADI HDL repo README](https://github.com/analogdevicesinc/hdl) for the exact supported Vivado version BEFORE downloading. ADI pins to a specific release (2022.2 or 2023.2 as of mid-2026). Wrong version = nothing builds.
-- Download is ~50 GB.
+- **Vivado 2025.2** installed natively on Windows (`C:\Users\Parit\AppData\Local\Xilinx` area). This is one minor version ahead of the newest ADI-supported release.
+- **ADI hdl repo**: latest release branch is `hdl_2026_r1`, which targets **Vivado 2025.1** (per https://analogdevicesinc.github.io/hdl/user_guide/releases.html — check this page again if picking up this work much later, versions move on). No ADI release yet targets 2025.2.
+- **Decision:** proceed with `hdl_2026_r1` on the 2025.2 install rather than installing 2025.1 side-by-side. Vivado usually auto-upgrades project files across one minor version; watch for IP core / constraint compatibility issues since ADI hasn't tested on 2025.2.
+- **Cloned to:** `C:\Users\Parit\Documents\Projects\ADI_hdl` — a **sibling directory to SDR_initial**, NOT inside it (deliberate choice: keeps ADI's large history/IP out of the SDR_initial repo; Vivado projects reference it by path).
+  - `git clone --branch hdl_2026_r1 --single-branch https://github.com/analogdevicesinc/hdl.git ADI_hdl`
+
+## Vivado version-check gotcha (important — causes silent Vivado GUI close)
+
+`hdl_2026_r1`'s `projects/scripts/adi_project_xilinx.tcl` (`adi_project_create` proc, ~line 199) hard-checks the Vivado version against `required_vivado_version` (2025.1). On mismatch it does NOT just warn — it calls Tcl `exit 2`, which kills the entire Vivado process (GUI vanishes with no dialog). This bit us running `adi_project` in the Tcl console on Vivado 2025.2.
+
+**Fix:** before sourcing anything, set `IGNORE_VERSION_CHECK 1` in the Tcl console (GUI flow) — or the `ADI_IGNORE_VERSION_CHECK=1` env var (`make`/batch flow) — which downgrades it to a printed "CRITICAL WARNING" instead of exiting. `project-xilinx.mk` does NOT set this automatically, so the background `make` build kicked off before this fix was found almost certainly died the same way and needs a retry with the env var set.
+
+## Missing IP packaging when skipping `make` (important)
+
+ADI's per-project Makefile (e.g. `projects/fmcomms2/zed/Makefile`) lists `LIB_DEPS` — custom IP cores (axi_ad9361, axi_dmac, axi_clkgen, axi_hdmi_tx, axi_i2s_adi, axi_spdif_tx, axi_sysid, sysid_rom, util_i2c_mixer, util_pack/util_cpack2, util_pack/util_upack2, util_rfifo, util_tdd_sync, util_wfifo, xilinx/util_clkdiv for fmcomms2/zed) that get packaged into Vivado's IP catalog (`component.xml` with a VLNV) via `make` BEFORE the block design (`system_bd.tcl`) ever runs. If you build the project by hand in the Vivado Tcl console (skipping `make`), these IPs are never packaged — block design creation fails with e.g. `ERROR: [BD 41-74] Please specify VLNV when creating IP cell sys_i2c_mixer` the first time it tries to instantiate one.
+
+**Fix used (confirmed working 2026-07-12):** package each `LIB_DEPS` entry directly via Vivado batch mode, one at a time, from inside that library's own directory: `call vivado -mode batch -source <libname>_ip.tcl` (with `ADI_IGNORE_VERSION_CHECK=1` set). This produces `component.xml` in place. All 15 fmcomms2/zed deps (axi_ad9361, axi_clkgen, axi_dmac, axi_hdmi_tx, axi_i2s_adi, axi_spdif_tx, axi_sysid, sysid_rom, util_i2c_mixer, util_pack/util_cpack2, util_pack/util_upack2, util_rfifo, util_tdd_sync, util_wfifo, xilinx/util_clkdiv) packaged successfully this way. Script saved at the session scratchpad as `package_libs.bat` — recreate similarly for other boards/projects by reading their Makefile's `LIB_DEPS` list.
+
+**Transitive LIB_DEPS gotcha:** the top-level project Makefile's `LIB_DEPS` list is NOT the full dependency closure — some libraries have their own `XILINX_LIB_DEPS` in their per-library Makefile that aren't repeated at the project level, because `make` resolves these recursively. For fmcomms2/zed, `axi_dmac` itself needs `util_axis_fifo` and `util_cdc` (see `library/axi_dmac/Makefile`), which caused `create_bd_cell` to fail on `analog.com:user:util_axis_fifo:1.0` subcore even after all 15 top-level LIB_DEPS were packaged. Fix: after packaging the top-level list, `grep -r "XILINX_LIB_DEPS +=" library/` (or just check each dep's own Makefile) to find hidden transitive deps, and package those too before retrying `adi_project`.
+
+**Batch-script gotcha:** `vivado` on Windows resolves to `vivado.bat`. Calling a `.bat` from inside another `.bat` WITHOUT `call` transfers control permanently — the parent script never resumes afterward (it silently exits with the child's exit code once the child finishes). Inside a `for %%D in (...) do (...)` loop this means only the FIRST iteration runs and the loop silently stops, even though the overall script reports exit code 0. Always use `call vivado ...`, not bare `vivado ...`, inside a batch script.
+
+**Also important:** the top-level `make` build (the one kicked off directly, not via the GUI) resolves these same LIB_DEPS through a Makefile rule that shells out to `flock ... sh -c ...`. **`flock.exe` does not exist anywhere on this Windows machine** (not bundled with Vivado, not with Git for Windows) — so plain `make` on this Windows setup will likely hang or fail once it reaches library packaging, even after the Vivado-version-check fix. The Tcl-console / manual-packaging route above is the reliable path on this machine until/unless a `flock`-providing environment (e.g. full WSL) is used instead.
+
+## Git-on-Windows gotcha
+
+Git for Windows was installed mid-session but new PowerShell tool invocations don't pick up the updated PATH automatically (each PowerShell call is a fresh process; only cwd persists, not env vars). Fix: prepend `$env:PATH = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")` at the start of any command that needs a just-installed tool, in the SAME command block that uses it.
 
 ## JTAG on ZedBoard
 
@@ -61,6 +85,125 @@ Wire the GMSK IP into the ADI block design. Rebuild bitstream. Test at increasin
 | ADI HDL compiles, programs via JTAG, tx_dma_fsk works | 2–4 days |
 | Block design understood, ready to add custom IP | 3–5 days |
 | Working GMSK modulator block | 1–2 weeks |
+
+## Milestone reached (2026-07-12): block design builds clean
+
+After packaging all `LIB_DEPS` + transitive deps (see above), `adi_project fmcomms2_zed` + `adi_project_files` completed with no errors — every IP Integrator block generated (`sys_i2c_mixer`, `axi_hdmi_dma`, `axi_ad9361`, DMA/pack/unpack cores, etc.), `system_wrapper.v` generated and imported cleanly. Remaining warnings (DDR DQS skew, AXI ID width mismatches on HP interconnects, EMIO SPI SSIN note) are normal/expected for this reference design, not blockers.
+
+**A real, reopenable Vivado project now exists at:**
+`C:\Users\Parit\Documents\Projects\ADI_hdl\projects\fmcomms2\zed\fmcomms2_zed.xpr`
+Just double-click it / `File → Open Project` next session — no need to redo the Tcl setup sequence unless the project is deleted/regenerated.
+
+**Next step (in progress):** Flow Navigator → Run Synthesis → Run Implementation → Generate Bitstream, on the now-clean project.
+
+## First bitstream built (2026-07-12) — but with hold-timing violations
+
+First full build succeeded mechanically (`system_top.bit`, ~3.86MB, in `fmcomms2_zed.runs/impl_1/`), setup timing passed (WNS +0.239ns), but **hold timing failed**: WHS -0.031ns, 11 failing endpoints, "Timing constraints are not met."
+
+**Root cause:** our manual Tcl-console project creation only pasted the `adi_project`/`adi_project_files` lines from `system_project.tcl`, skipping two lines that matter for timing closure on THIS specific project:
+```tcl
+set ADI_POST_ROUTE_SCRIPT [file normalize $ad_hdl_dir/projects/scripts/auto_timing_fix_xilinx.tcl]
+set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
+```
+`auto_timing_fix_xilinx.tcl` is ADI's own automated hold-fix (`phys_opt_design -hold_fix` loop + a `route_design` re-run workaround), added specifically because of a **known Vivado 2024.x/2025.x hold-timing regression** (see comments in that script, links to AMD/Xilinx forum threads). This is a known/expected issue for THIS Vivado version, not something we caused.
+
+**Fix (applied via Tcl console, not yet confirmed successful as of last check):**
+```tcl
+add_files -fileset utils_1 -norecurse [file normalize "$ad_hdl_dir/projects/scripts/auto_timing_fix_xilinx.tcl"]
+set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
+set_property STEPS.ROUTE_DESIGN.TCL.POST [get_files auto_timing_fix_xilinx.tcl -of [get_fileset utils_1]] [get_runs impl_1]
+reset_run impl_1
+launch_runs impl_1 -to_step write_bitstream
+wait_on_run impl_1
+```
+**Result (confirmed 2026-07-12): timing closure achieved.** After wiring in `auto_timing_fix_xilinx.tcl` + `Congestion_SpreadLogic_high` strategy and re-running `impl_1`, the ATF's `route_design`-workaround alone fixed it (0 phys_opt_design attempts needed): WNS +0.249ns, WHS improved from -0.031ns (FAILED, 11 endpoints) to **+0.012ns (PASS, 0 endpoints)**. `write_bitstream completed successfully` ran immediately after against this fixed checkpoint (`ATF_success_system_top_routed.dcp`) — confirmed via `runme.log`. First fully clean bitstream for fmcomms2/zed exists at `fmcomms2_zed.runs/impl_1/system_top.bit`.
+
+**Reporting gotcha:** `system_top_timing_summary_routed.rpt` (the standard post-route report) is NOT overwritten by the ATF post-route script — it stays frozen at the pre-fix (failing) numbers. The real final result lives in `ATF_<n>_final_timing_summary.txt` and `runme.log` ("Auto Timing Fix SUCCESS/FAILURE" line). Always check those, not the plain `_routed.rpt` file, when ADI_POST_ROUTE_SCRIPT is in use.
+
+**Lesson for next manual project recreation:** paste the FULL body of `system_project.tcl` (including the `ADI_POST_ROUTE_SCRIPT`/strategy lines), not just the `adi_project`/`adi_project_files` calls — those two lines matter for timing closure on boards/projects known to have hold-violation issues, and skipping them isn't obvious until you check the timing summary report after implementation.
+
+## Architecture pivot (2026-07-19): board roles swapped, target IP is now RX demodulator not TX modulator
+
+Pari decided to swap TX/RX roles from the original SDR_Link setup:
+- **TX now = Pluto+**, staying pure software/C (libiio, precompute-buffer + `iio_buffer_push()`, same technique as `tx_dma_fsk`). No HDL needed on Pluto+.
+- **RX now = ZedBoard**, and the custom FPGA IP target shifts from a TX-path GMSK **modulator** to an RX-path GMSK **demodulator** (matched filter + timing recovery (Gardner/Mueller-style) + symbol decision), inserted in the `cf-ad9361-lpc` (RX capture) AXI-Stream path instead of `cf-ad9361-dds-core-lpc` (TX DMA path).
+
+**Why this split:** TX modulation is a batch/precompute problem — the AD9361 DAC clocks out a pre-filled buffer in hardware, decoupled from CPU scheduler jitter, so software TX is tractable even at high rates as long as a frame can be precomputed before its playback deadline. RX demodulation is a genuinely real-time streaming problem — incoming ADC samples must be matched-filtered/timing-recovered/decided continuously with no ability to precompute ahead, which a Cortex-A9 under Linux cannot sustain at high sample rates. This asymmetry (not just "RX has more math") is why RX specifically needs PL and TX doesn't.
+
+**Why ZedBoard gets the HDL work:** JTAG access is currently only available for the ZedBoard, and all the Vivado/ADI HDL environment work already done (fmcomms2/zed project, IP packaging workarounds, timing-closure fix, verified-working bitstream — see below) is built against it. Pluto+ has no JTAG access right now, so it stays as a pure userspace box running its stock bitstream.
+
+**Implication for the milestone plan above:** Steps 2–4 (understand block design → write custom IP → integrate/test) still apply, but Step 3's IP is now a **GMSK demodulator on the RX AXI-Stream path**, not a modulator on TX. The Gaussian-filter-plus-phase-accumulator TX design sketched earlier in this file is deprioritized/moot for the FPGA work — that logic will likely live in the Pluto+ C program instead.
+
+## Bitstream verified live on hardware (2026-07-19)
+
+Sequence: power-cycled ZedBoard, then JTAG-programmed `fmcomms2_zed.runs\impl_1\system_top.bit` via Vivado Hardware Manager (onboard Digilent JTAG-SMT2, PROG/JTAG micro-USB port), no reboot since. DONE LED lit.
+
+SSH'd in (`root@192.168.1.110`, password `analog` — see [[project_sdr_devices]]) via `plink -ssh -pw analog -hostkey "SHA256:z4z2L1uAyEimv/jaraHlLzKdlgMnQ+rLiQ32QbePPVs" -batch root@192.168.1.110 "..."` since this Windows box has no `sshpass`, only PuTTY's `plink.exe` (`C:\Program Files\PuTTY\plink`). Board uptime was only ~5 min (from the power-cycle), confirming no later reboot occurred that would've reloaded the OLD bitstream from the SD card's `BOOT.BIN`.
+
+`iio_info -s` shows all expected contexts/devices intact against the new PL image: `ad9361-phy`, `cf-ad9361-dds-core-lpc`, `cf-ad9361-lpc`, `xadc`, `ad7291`, `e000b000ethernet...`. Kernel `6.1.70`. No driver errors in `dmesg`.
+
+**Conclusion:** the recompiled/timing-fixed `fmcomms2_zed` bitstream is confirmed functionally equivalent to the previous stock image at the Linux/IIO level — device enumeration only, not yet a TX-path data test.
+
+**Not yet confirmed:** whether `tx_dma_fsk` (or `tx_cw`) actually transmits correctly against this new bitstream — device enumeration succeeding doesn't prove the DMA/AXI-Stream TX datapath works end-to-end. That's the next validation step before moving to Step 2 (studying the block design) / Step 3 (writing the GMSK IP).
+
+## TX/RX role-swap validated end-to-end (2026-07-19)
+
+After the ZedBoard SD card replacement (see [[project_sdr_devices]]) and re-establishing network access, ran the actual role-swap validation: **TX moved to Pluto+, RX moved to ZedBoard**, reusing the existing `tx_dma_fsk.c`/`rx.c` C apps unmodified (both use `iio_create_local_context()`, no code changes needed — see the architecture-pivot note above for why this split makes sense).
+
+**Method:** compiled both `tx_dma_fsk.c` and `rx.c` natively on the ZedBoard (has gcc; Windows laptop has no ARM cross-compiler), then copied the TX binary over to Pluto+ via `cat`-over-SSH (`rx-deploy-via-zed`-style trick — Pluto+ has no sftp-server so pscp doesn't work, plain cat-over-ssh pipe preserves binary integrity fine). Ran RX in the background on ZedBoard, TX in the background on Pluto+.
+
+**Gotcha hit: `pkill -f <name>` can kill its own SSH session.** `pkill -f rx_arm` matches against the FULL command line of every process, including the invoking shell's own `sh -c "pkill -f rx_arm; ..."` line (which itself contains the string "rx_arm") — it killed itself/the session before the rest of the command could run (symptom: plink exits 128, zero output, even from an unrelated later `echo`). Fix: use `killall rx_arm` (matches process name only) instead of `pkill -f` for this kind of remote one-liner.
+
+**First attempt received only noise** (ΔP flipping small-magnitude and incoherently every ~1ms tick, stuck in `[IDLE|HUNT]` forever) — root cause was **forgetting to physically swap the antennas** to match the new roles. The AD9361/FMCOMMS2 boards have separate TX and RX SMA ports; the antennas were still on the ports matching the OLD roles. Fix: move each board's antenna to the port matching its CURRENT role (Pluto+ → TX port, ZedBoard → RX port).
+
+**After swapping antennas: confirmed working end-to-end.** Clean ΔP swings (~+20dB / ~-20dB, matching real modulation, not noise), full frame sync achieved (preamble → 0xD5 SYNC → LEN → data), decoded payload correctly twice in a row: `>>> HELLO SDR`. TX→RX role swap is validated — Pluto+ transmitting, ZedBoard receiving.
+
+**Also note:** `/tmp` on both boards is RAM-backed (tmpfs) — power-cycling either board wipes any compiled binaries there and they need to be re-uploaded/recompiled from source (source files on the laptop are the durable copy, as expected).
+
+## Step 0 (infrastructure proof) — in progress, build running (2026-07-19)
+
+Following the finer-grained testable-step breakdown (see the published diagram artifact below), started actual HDL work with **Step 0**: a trivial custom AXI4-Lite IP with zero DSP, whose only purpose is to prove the Verilog -> IP-packaging -> block-design -> bitstream -> JTAG -> Linux-readback loop works end to end, fully decoupled from any discriminator/timing-recovery correctness question.
+
+**Diagram artifact (architecture + finer-grained testable build sequence):** https://claude.ai/code/artifact/d6c9f6e5-c4d4-4965-a345-9dd27554dd57 — vertical schematic, Step 0 through Step 6, each with its own SIM/HW test gate. Republish the same scratchpad file path in a fresh session to update it further; a session that didn't publish it needs the URL passed explicitly to update in place.
+
+### Files (in SDR_initial repo, git-tracked, NOT the ADI_hdl sibling repo)
+
+- `hdl/gmsk_step0_regs/gmsk_step0_regs.v` — the module. Three registers, each proving something distinct:
+  - `0x0 ID` (read-only) = `32'h474D_534B` ("GMSK" ASCII-hex) — proves address decode routes to *this* IP specifically.
+  - `0x4 SCRATCH` (read/write) — write-then-read-back proves the AXI-Lite write path, not just reads.
+  - `0x8 COUNTER` (read-only, free-running, increments every `S_AXI_ACLK`) — proves the fabric clock is really driving sequential logic, not just static wiring.
+  - Standard/correct AXI4-Lite slave handshake pattern (matches Xilinx's own generated template structure) — written from scratch, not copy-pasted from a wizard.
+- `hdl/gmsk_step0_regs/package_ip.tcl` — packaging script. **Known-fixed version**: does NOT call `ipx::create_xgui_document` (see gotcha below).
+- `hdl/gmsk_step0_regs/ip_repo/gmsk_step0_regs/` — packaged IP output (`component.xml` etc.), confirmed complete and valid (31KB, properly closed, checksums present, 66 `S_AXI` references, correct name tag).
+
+### Gotchas hit packaging + integrating this IP (useful for the next custom IP too)
+
+1. **Tcl `set` is not batch `set`.** `set ADI_IGNORE_VERSION_CHECK=1` inside Vivado's interactive Tcl Shell throws `can't read "ADI_IGNORE_VERSION_CHECK=1": no such variable` — that's cmd.exe/batch syntax, not Tcl. Tcl reaches OS env vars via the `env` array: `set ::env(ADI_IGNORE_VERSION_CHECK) 1`. Also: if Vivado's Tcl Shell is already running interactively, don't re-invoke `vivado -mode batch -source ...` — just `source <script>.tcl` directly in the session you're already in.
+2. **`ipx::create_xgui_document` may not exist as a valid command** in this Vivado session/mode (`invalid command name` error) — it only builds the cosmetic "re-customize IP" GUI page and isn't needed for an IP with no configurable parameters. `package_ip.tcl` was fixed to skip it; packaging completes fine via just `ipx::update_checksums` + `ipx::save_core`.
+3. **Vivado's Tcl console echoes commands interleaved with their output**, which can look like a crash/failure when it isn't (e.g. `current_project fmcomms2_zed` appearing to "break" a sequence was actually just an echoed return value). **Ground truth is always the filesystem** — check whether `component.xml` (or whatever the expected output file is) actually exists and is well-formed (non-truncated, has the right tags/checksums) rather than trusting a garbled pasted transcript.
+4. **`update_ip_catalog` fails while a block design is open**: `Cannot update IP catalog while a BD design is open`. Fix: `close_bd_design [current_bd_design]` -> `update_ip_catalog` -> reopen the `.bd` file.
+5. **The hold-timing fix properties persist correctly** across new IP integration work — `get_property strategy [get_runs impl_1]` still returned `Congestion_SpreadLogic_high` and `STEPS.ROUTE_DESIGN.TCL.POST` still pointed at `auto_timing_fix_xilinx.tcl` without needing to redo any of that setup. These are saved per-run in the project, not something a block-design edit touches.
+
+### Current status: build running, not yet confirmed
+
+- IP repo path registered on the **real** `fmcomms2_zed` project (not a throwaway packaging project): `set_property ip_repo_paths {c:/Users/Parit/Documents/Projects/ADI_hdl/library C:/Users/Parit/Documents/Projects/SDR_initial/hdl/gmsk_step0_regs/ip_repo/gmsk_step0_regs} [current_project]`
+- IP instantiated in the `system.bd` block design, Connection Automation wired `S_AXI` into the PS AXI-Lite interconnect.
+- **Address assigned by Vivado's Address Editor: base `0x40000000`, 4K window**, in the `/sys_ps7/Data` address space — same address space as all of ADI's own peripherals (`axi_ad9361` at `0x79020000`, `axi_sysid_0` at `0x45000000`, etc.), confirmed via `AddressSegments.csv`. Our IP is now a first-class peripheral in this design's address map.
+- `validate_bd_design` passed clean — the only warnings were pre-existing/expected ones (SPI EMIO SSIN note, clk_wiz INFO), nothing named our IP, which is the good sign (validate_bd_design names cells explicitly when something about their connections is wrong).
+- `generate_target all [get_files */system.bd]` run, `reset_run synth_1`, then `launch_runs impl_1 -to_step write_bitstream -jobs 4` kicked off at **2026-07-19 ~22:53**. As of last check it was still running (`wait_on_run impl_1` blocking the console; Design Runs panel in the GUI shows live progress). Expected total time 15-45+ min for this design size + the ATF hold-timing pass, based on how long the equivalent first build took.
+
+**Register map once this bitstream is programmed (base 0x40000000):**
+| Register | Address | Test |
+|---|---|---|
+| ID | `0x40000000` | `devmem 0x40000000` -> expect `0x474d534b` |
+| SCRATCH | `0x40000004` | `devmem 0x40000004 32 0xdeadbeef` then `devmem 0x40000004` -> expect `0xdeadbeef` back |
+| COUNTER | `0x40000008` | `devmem 0x40000008`, wait, `devmem 0x40000008` again -> second read should be larger |
+
+**Next steps once the build finishes (this is exactly where to resume if the session drops):**
+1. Check `runme.log` for the ATF result — NOT the plain `system_top_timing_summary_routed.rpt` (stays frozen at pre-fix numbers): `exec grep -r "Auto Timing Fix" .../fmcomms2_zed.runs/impl_1/runme.log` (look for SUCCESS).
+2. JTAG-program the new `system_top.bit` (`fmcomms2_zed.runs/impl_1/system_top.bit`) via Vivado Hardware Manager, same process as before (ZedBoard's PROG/JTAG micro-USB port).
+3. SSH to the ZedBoard (IP may have changed again after reboot — check via serial/ARP as done previously) and run the three `devmem` tests above.
+4. All three passing = **Step 0 done.** Move to Step 1 (frequency discriminator) per the diagram artifact's build sequence.
 
 ## Key concept to remember
 

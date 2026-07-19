@@ -1,0 +1,43 @@
+######################################################################################
+# This is a generated CSV file representing the addressing in design system
+#
+# Format:
+# Master Segment Name, Address Space, Slave Segment, Offset, Range ...
+#      Excluded (optional), Included (optional), Unassigned (optional)
+######################################################################################
+
+# 
+# Assignments in Address Space /axi_ad9361_adc_dma/m_dest_axi
+#
+SEG_sys_ps7_HP1_DDR_LOWOCM,/axi_ad9361_adc_dma/m_dest_axi,/sys_ps7/S_AXI_HP1/HP1_DDR_LOWOCM,0x00000000,512M
+# 
+# Assignments in Address Space /axi_ad9361_adc_dma/m_sg_axi
+#
+SEG_sys_ps7_HP1_DDR_LOWOCM,/axi_ad9361_adc_dma/m_sg_axi,/sys_ps7/S_AXI_HP1/HP1_DDR_LOWOCM,0x00000000,512M
+# 
+# Assignments in Address Space /axi_ad9361_dac_dma/m_sg_axi
+#
+SEG_sys_ps7_HP2_DDR_LOWOCM,/axi_ad9361_dac_dma/m_sg_axi,/sys_ps7/S_AXI_HP2/HP2_DDR_LOWOCM,0x00000000,512M
+# 
+# Assignments in Address Space /axi_ad9361_dac_dma/m_src_axi
+#
+SEG_sys_ps7_HP2_DDR_LOWOCM,/axi_ad9361_dac_dma/m_src_axi,/sys_ps7/S_AXI_HP2/HP2_DDR_LOWOCM,0x00000000,512M
+# 
+# Assignments in Address Space /axi_hdmi_dma/m_src_axi
+#
+SEG_sys_ps7_HP0_DDR_LOWOCM,/axi_hdmi_dma/m_src_axi,/sys_ps7/S_AXI_HP0/HP0_DDR_LOWOCM,0x00000000,512M
+# 
+# Assignments in Address Space /sys_ps7/Data
+#
+SEG_gmsk_step0_regs_0_reg0,/sys_ps7/Data,/gmsk_step0_regs_0/S_AXI/reg0,0x40000000,4K
+SEG_data_axi_iic_main,/sys_ps7/Data,/axi_iic_main/S_AXI/Reg,0x41600000,4K
+SEG_data_axi_iic_fmc,/sys_ps7/Data,/axi_iic_fmc/S_AXI/Reg,0x41620000,4K
+SEG_data_axi_hdmi_dma,/sys_ps7/Data,/axi_hdmi_dma/s_axi/axi_lite,0x43000000,4K
+SEG_data_axi_sysid_0,/sys_ps7/Data,/axi_sysid_0/s_axi/axi_lite,0x45000000,64K
+SEG_data_axi_hdmi_core,/sys_ps7/Data,/axi_hdmi_core/s_axi/axi_lite,0x70E00000,64K
+SEG_data_axi_spdif_tx_core,/sys_ps7/Data,/axi_spdif_tx_core/s_axi/axi_lite,0x75C00000,64K
+SEG_data_axi_i2s_adi,/sys_ps7/Data,/axi_i2s_adi/s_axi/axi_lite,0x77600000,64K
+SEG_data_axi_hdmi_clkgen,/sys_ps7/Data,/axi_hdmi_clkgen/s_axi/axi_lite,0x79000000,64K
+SEG_data_axi_ad9361,/sys_ps7/Data,/axi_ad9361/s_axi/axi_lite,0x79020000,64K
+SEG_data_axi_ad9361_adc_dma,/sys_ps7/Data,/axi_ad9361_adc_dma/s_axi/axi_lite,0x7C400000,4K
+SEG_data_axi_ad9361_dac_dma,/sys_ps7/Data,/axi_ad9361_dac_dma/s_axi/axi_lite,0x7C420000,4K

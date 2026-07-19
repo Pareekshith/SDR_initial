@@ -12,3 +12,8 @@ arm-sysroot
 # Editor / IDE
 .vscode/
 .claude/settings.local.json
+
+# Vivado IP-packaging scaffolding / batch-mode byproducts (regenerable)
+hdl/*/_ip_pkg_proj/
+hdl/*/dfx_runtime.txt
+hdl/*/tcl_log*.txt
