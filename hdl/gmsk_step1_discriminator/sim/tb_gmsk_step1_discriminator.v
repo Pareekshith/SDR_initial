@@ -13,7 +13,7 @@
 module tb_gmsk_step1_discriminator;
 
     localparam integer IQ_WIDTH        = 16;
-    localparam integer OUT_WIDTH       = 18;
+    localparam integer OUT_WIDTH       = 16;   // must match DUT's OUT_WIDTH (multiple of 8, AXI4-Stream rule)
     localparam integer SAMPLES_PER_BIT = 480;
     localparam integer NUM_BITS        = 10;
     localparam integer NUM_SAMPLES     = SAMPLES_PER_BIT * NUM_BITS;
