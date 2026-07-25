@@ -1,0 +1,247 @@
+<title>Step 1 — Frequency Discriminator</title>
+<style>
+  :root {
+    --paper: #F2F3EE;
+    --ink: #1B211F;
+    --muted: #6B7269;
+    --border: #CBD0C4;
+    --card-bg: #FDFDFB;
+    --copper: #A85A26;
+    --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC;
+    --teal: #2E8F87;
+    --teal-soft: #CFE7E4;
+    --teal-line: #2E8F87;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131715;
+      --ink: #E7EBE5;
+      --muted: #8D9690;
+      --border: #2B322E;
+      --card-bg: #1A201D;
+      --copper: #DE9257;
+      --copper-strong: #F0AE7A;
+      --copper-soft: #3A2A1C;
+      --teal: #56C6BB;
+      --teal-soft: #16302C;
+      --teal-line: #56C6BB;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131715; --ink: #E7EBE5; --muted: #8D9690; --border: #2B322E;
+    --card-bg: #1A201D; --copper: #DE9257; --copper-strong: #F0AE7A;
+    --copper-soft: #3A2A1C; --teal: #56C6BB; --teal-soft: #16302C; --teal-line: #56C6BB;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F2F3EE; --ink: #1B211F; --muted: #6B7269; --border: #CBD0C4;
+    --card-bg: #FDFDFB; --copper: #A85A26; --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC; --teal: #2E8F87; --teal-soft: #CFE7E4; --teal-line: #2E8F87;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 56px 28px 100px; }
+
+  .eyebrow {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-weight: 700; font-size: clamp(26px, 4.2vw, 36px);
+    letter-spacing: -0.01em; text-wrap: balance; margin: 0 0 10px;
+  }
+  .subtitle { font-size: 17px; color: var(--muted); max-width: 58ch; margin: 0 0 40px; }
+
+  h2 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--copper-strong); font-weight: 700;
+    margin: 48px 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  section:first-of-type h2 { margin-top: 0; }
+  p { max-width: 62ch; font-size: 16.5px; margin: 0 0 16px; }
+  .max-none { max-width: none; }
+  strong { color: var(--copper-strong); font-weight: 700; }
+  code {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 0.88em; background: var(--teal-soft); color: var(--teal);
+    padding: 1px 5px; border-radius: 4px;
+  }
+
+  .callout {
+    background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--teal);
+    border-radius: 8px; padding: 16px 20px; margin: 0 0 20px; box-shadow: var(--shadow);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .k {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 6px;
+  }
+
+  /* comparison table */
+  .tbl-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 520px; }
+  thead th {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    text-align: left; color: var(--muted); background: var(--card-bg);
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; background: var(--card-bg); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.chosen { position: relative; }
+  td.chosen::before {
+    content: "\2713 CHOSEN";
+    display: block;
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 10px; letter-spacing: 0.08em; font-weight: 700;
+    color: var(--teal); margin-bottom: 6px;
+  }
+
+  /* block diagram */
+  .diagram {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    margin: 8px 0 8px; padding: 26px 20px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+  .dblock {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 12.5px; text-align: center; padding: 12px 14px; border-radius: 8px;
+    border: 1.5px solid var(--border); background: var(--paper); color: var(--ink);
+    flex: none; line-height: 1.35; min-width: 92px;
+  }
+  .dblock.accent { border-color: var(--teal); color: var(--teal); }
+  .dblock.out { border-color: var(--copper); color: var(--copper-strong); }
+  .darrow { flex: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+  .dgroup { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+  .dgroup .caption { font-size: 10px; color: var(--muted); font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; letter-spacing: 0.04em; }
+
+  figure { margin: 0 0 8px; }
+  figcaption {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; margin-top: 10px;
+  }
+
+  ul.notes { padding-left: 20px; margin: 0 0 20px; }
+  ul.notes li { font-size: 15.5px; margin-bottom: 10px; max-width: 58ch; }
+  ul.notes li::marker { color: var(--copper); }
+
+  footer { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 480px) {
+    .wrap { padding: 36px 18px 72px; }
+    .diagram { padding: 18px 14px; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Step 1 &middot; Technical Note</p>
+  <h1>Frequency Discriminator</h1>
+  <p class="subtitle">The block every later RX stage depends on: turns raw IQ samples into an instantaneous-frequency signal that a bit slicer can threshold.</p>
+
+  <section>
+    <h2>What problem this solves</h2>
+    <p>GMSK is <strong>continuous-phase FSK</strong> under a Gaussian pre-filter &mdash; a 1-bit is one frequency, a 0-bit is another, and the phase never jumps discontinuously between them. That means the data isn't sitting in the amplitude or the raw phase of the received signal &mdash; it's sitting in <strong>how fast the phase is rotating</strong> from one sample to the next.</p>
+    <p>So demodulation is fundamentally an FM-radio problem: recover instantaneous frequency from the complex baseband stream coming off the AD9361's RX path (<code>cf-ad9361-lpc</code>). Every stage after this &mdash; bit slicing, timing recovery, preamble/sync detection &mdash; consumes <em>this block's output</em>, never the raw I/Q.</p>
+  </section>
+
+  <section>
+    <h2>Two ways to compute it</h2>
+    <p>The textbook definition is a derivative of phase: given the complex sample <code>z[n] = I[n] + jQ[n]</code>, instantaneous phase is <code>&theta;[n] = atan2(Q[n], I[n])</code>, and instantaneous frequency is <code>&theta;[n] &minus; &theta;[n&minus;1]</code> (unwrapped). That's correct, but computing <code>atan2</code> in fixed-point hardware means a CORDIC core &mdash; area and latency for a value we only need approximately.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Approach</th><th>How it works</th><th>Cost in fabric</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Phase-difference (atan2)</strong></td>
+            <td>Compute absolute phase every sample via CORDIC, subtract previous sample's phase, unwrap.</td>
+            <td>A CORDIC core (multi-cycle, iterative) plus unwrap logic. Exact, but heavier than this step needs.</td>
+          </tr>
+          <tr>
+            <td class="chosen"><strong>Delay-and-conjugate-multiply</strong></td>
+            <td>Multiply each sample by the complex conjugate of the previous one: <code>z[n]&middot;z*[n&minus;1]</code>. The imaginary part of that product is proportional to <code>sin(&Delta;&theta;)</code> &mdash; a direct stand-in for instantaneous frequency at small phase steps.</td>
+            <td>One sample delay (a register) plus one complex multiply &mdash; 4 real multiplies and 2 adds. Fully combinational/pipelined, one sample per clock, no iteration.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p class="k">Why the cross-product wins here</p>
+      <p>This is the standard &ldquo;quadrature FM demodulator&rdquo; trick used in real analog and digital radios &mdash; it trades a small-angle approximation for a massive reduction in logic. At our bit rate the phase step between samples is small, so the approximation error is negligible, and we get a block that's just multiplies and adds &mdash; no CORDIC, no iteration, one clock per sample.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where it sits in the datapath</h2>
+    <figure>
+      <div class="diagram">
+        <div class="dgroup">
+          <div class="dblock accent">I[n], Q[n]<br>from cf-ad9361-lpc</div>
+          <span class="caption">AXI-Stream in</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock">1-sample<br>delay reg</div>
+          <span class="caption">z[n&minus;1]</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock">complex<br>multiply<br>z[n]&middot;z*[n&minus;1]</div>
+          <span class="caption">4 mults, 2 adds</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock">extract<br>Im{&middot;}</div>
+          <span class="caption">discard real part</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock out">discriminator<br>out &rarr; Step 2</div>
+          <span class="caption">AXI-Stream out</span>
+        </div>
+      </div>
+      <figcaption>One sample in, one discriminator value out, every clock &mdash; no rate change, fully pipelined.</figcaption>
+    </figure>
+    <p>Input: complex IQ samples off the RX capture core, signed fixed-point (matching the AD9361's native word width). Output: one signed fixed-point discriminator value per input sample, same cadence. This block does not change the sample rate &mdash; that's still 2.304&nbsp;Msps per the current RF params &mdash; it just re-expresses each sample as &ldquo;how fast is phase moving right now&rdquo; instead of I/Q.</p>
+  </section>
+
+  <section>
+    <h2>Fixed-point notes</h2>
+    <ul class="notes">
+      <li><strong>Bit growth from the multiply</strong> &mdash; multiplying two N-bit signed values needs 2N bits to avoid overflow; decide where to truncate/round before handing the result downstream, rather than growing width forever through the pipeline.</li>
+      <li><strong>One register of delay</strong> is the entire &ldquo;memory&rdquo; this block needs &mdash; no filter taps, no state machine, just <code>z[n&minus;1]</code> held one clock behind <code>z[n]</code>.</li>
+      <li><strong>Two expected output levels</strong> &mdash; per <code>rf_params.h</code>, MARK sits 150&nbsp;kHz above the LO and SPACE sits 50&nbsp;kHz above it. Those map to two known, separated discriminator output levels &mdash; that separation is exactly what Step&nbsp;2's threshold will key off.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Test plan</h2>
+    <p>This is exactly why the simplified TX frame matters: a continuous <code>1,0,1,0,1,0&hellip;</code> pattern is a periodic square wave in the frequency domain &mdash; the cleanest possible input for this specific block, with no framing logic involved yet.</p>
+    <div class="callout">
+      <p class="k">Pass condition</p>
+      <p>Capture the discriminator's output (ILA, or a register-peek in the same devmem style as Step&nbsp;0) while the real TX frame is on air. It should toggle cleanly between two levels &mdash; one per bit &mdash; at the transmitted bit rate. Any noisy or single-level output means the multiply, delay, or Im{&middot;} extraction has a bug, isolated entirely within this one block.</p>
+    </div>
+  </section>
+
+  <footer>
+    Step 0 proved the toolchain. This step proves the DSP idea. Step 2 (bit slicer) is the first block that consumes this one's output.
+  </footer>
+</div>

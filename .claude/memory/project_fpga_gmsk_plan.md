@@ -138,7 +138,7 @@ Pari decided to swap TX/RX roles from the original SDR_Link setup:
 
 Sequence: power-cycled ZedBoard, then JTAG-programmed `fmcomms2_zed.runs\impl_1\system_top.bit` via Vivado Hardware Manager (onboard Digilent JTAG-SMT2, PROG/JTAG micro-USB port), no reboot since. DONE LED lit.
 
-SSH'd in (`root@192.168.1.110`, password `analog` — see [[project_sdr_devices]]) via `plink -ssh -pw analog -hostkey "SHA256:z4z2L1uAyEimv/jaraHlLzKdlgMnQ+rLiQ32QbePPVs" -batch root@192.168.1.110 "..."` since this Windows box has no `sshpass`, only PuTTY's `plink.exe` (`C:\Program Files\PuTTY\plink`). Board uptime was only ~5 min (from the power-cycle), confirming no later reboot occurred that would've reloaded the OLD bitstream from the SD card's `BOOT.BIN`.
+SSH'd in (`root@192.168.1.110`, password redacted here — see [[project_sdr_devices]]) via `plink -ssh -pw <redacted> -hostkey "SHA256:z4z2L1uAyEimv/jaraHlLzKdlgMnQ+rLiQ32QbePPVs" -batch root@192.168.1.110 "..."` since this Windows box has no `sshpass`, only PuTTY's `plink.exe` (`C:\Program Files\PuTTY\plink`). Board uptime was only ~5 min (from the power-cycle), confirming no later reboot occurred that would've reloaded the OLD bitstream from the SD card's `BOOT.BIN`.
 
 `iio_info -s` shows all expected contexts/devices intact against the new PL image: `ad9361-phy`, `cf-ad9361-dds-core-lpc`, `cf-ad9361-lpc`, `xadc`, `ad7291`, `e000b000ethernet...`. Kernel `6.1.70`. No driver errors in `dmesg`.
 
@@ -204,6 +204,23 @@ Following the finer-grained testable-step breakdown (see the published diagram a
 2. JTAG-program the new `system_top.bit` (`fmcomms2_zed.runs/impl_1/system_top.bit`) via Vivado Hardware Manager, same process as before (ZedBoard's PROG/JTAG micro-USB port).
 3. SSH to the ZedBoard (IP may have changed again after reboot — check via serial/ARP as done previously) and run the three `devmem` tests above.
 4. All three passing = **Step 0 done.** Move to Step 1 (frequency discriminator) per the diagram artifact's build sequence.
+
+## Step 0 CONFIRMED PASSING on hardware (2026-07-25)
+
+ATF result in `runme.log`: "Auto Timing Fix SUCCESS after 0 attempts - final WNS is 0.027 ns." `system_top.bit` (4,045,686 bytes) JTAG-programmed onto the ZedBoard via Vivado Hardware Manager, DONE LED lit, board back up.
+
+**Gotcha: `devmem` binary not found on this rootfs.** The fresh Kuiper image (from the 2026-07-19 SD card reflash) doesn't ship a standalone `/usr/bin/devmem` — only busybox's multi-call binary provides it. Fix: prefix every call with `busybox`, e.g. `busybox devmem 0x40000000` instead of bare `devmem 0x40000000` (which gives `command not found`, exit 127). Remember this for any future register-poke test on this board/image.
+
+**ZedBoard IP at time of test:** `192.168.1.106` (still DHCP-assigned from the reflash, unchanged since 2026-07-19 — static-IP config still not restored, see [[project_sdr_devices]] outstanding item #1). SSH password for this fresh rootfs: (redacted — ask Pari; confirmed working 2026-07-25, differs from the old rootfs's password).
+
+**All three register tests passed:**
+| Register | Address | Result |
+|---|---|---|
+| ID | `0x40000000` | `0x474D534B` — exact match |
+| SCRATCH | `0x40000004` | wrote `0xDEADBEEF`, read back `0xDEADBEEF` |
+| COUNTER | `0x40000008` | `0x6B154766` → `0x711C28E0` after 1s — incrementing |
+
+**Step 0 is DONE.** The full Verilog → IP-packaging → block-design → bitstream → JTAG → Linux-readback loop is proven end-to-end on real hardware, fully decoupled from GMSK correctness questions. Per the diagram artifact's build sequence, **next is Step 1: frequency discriminator** (first real DSP block on the RX AXI-Stream path, per the architecture pivot — see the section above on the TX/RX role swap).
 
 ## Key concept to remember
 

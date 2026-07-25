@@ -13,14 +13,14 @@ Two SDR boards on the home LAN (192.168.1.0/24, TP-Link router at 192.168.1.1):
 - IP: 192.168.1.110 (static via dhcpcd.conf)
 - MAC: 00:0a:35:00:01:23 (overridden via /etc/systemd/network/10-eth0-mac.link; hardware MAC is 00:0a:35:00:01:22)
 - Serial: /dev/ttyACM0, 115200 8N1, already logged in as root
-- SSH: root@192.168.1.110, password: analog (same as Pluto+; no SSH key set up as of 2026-07-19)
+- SSH: root@192.168.1.110, password: (redacted — same as Pluto+, ask Pari; no SSH key set up as of 2026-07-19)
 - OS: Yocto/ADI Linux (systemd, dhcpcd)
 
 **Pluto+** (Chinese clone of ADALM-PLUTO, Zynq-7010 + AD9361, has Ethernet + SD card)
 - IP (Ethernet): 192.168.1.102 (static via fw_setenv ipaddr_eth)
 - IP (USB tunnel): 192.168.2.1 (always available when USB connected)
 - MAC: 00:0a:35:00:01:22
-- SSH: root@192.168.1.102 or root@192.168.2.1, password: analog
+- SSH: root@192.168.1.102 or root@192.168.2.1, password: (redacted — ask Pari)
 - OS: Buildroot (sysvinit, udhcpc), ADI firmware
 
 **Why:** Set up during first session. Both boards had the same default Xilinx MAC (00:0a:35:00:01:22) causing ARP conflicts — ZedBoard's MAC was overridden at the OS layer.
@@ -62,7 +62,9 @@ Two SDR boards on the home LAN (192.168.1.0/24, TP-Link router at 192.168.1.1):
 
 **Current ZedBoard IP is now 192.168.1.106** (DHCP-assigned, distinct MAC `00:0a:35:00:01:23`) — **not** the old static `192.168.1.110** anymore, since the dhcpcd static-IP config from the old rootfs doesn't exist on this fresh image. Update SSH commands/scripts to use `.106` until/unless a static IP is reconfigured. Pluto+ remains at `192.168.1.102`, unaffected.
 
-**Verified via SSH (2026-07-19):** `root@192.168.1.106`, password `analog`, new SSH host key `SHA256:BNeiBArC949eFL23J+no8BfYq6rHikzDuaLiaiMuIzo` (fresh image regenerates host keys, expect a "key not cached" prompt once). `iio_info -s` confirms `ad9361-phy`, `cf-ad9361-dds-core-lpc`, `cf-ad9361-lpc`, `ad7291`, `xadc` all present and healthy.
+**Verified via SSH (2026-07-19):** `root@192.168.1.106`, password (redacted — see correction below), new SSH host key `SHA256:BNeiBArC949eFL23J+no8BfYq6rHikzDuaLiaiMuIzo` (fresh image regenerates host keys, expect a "key not cached" prompt once). `iio_info -s` confirms `ad9361-phy`, `cf-ad9361-dds-core-lpc`, `cf-ad9361-lpc`, `ad7291`, `xadc` all present and healthy.
+
+**Password correction (2026-07-25):** the fresh Kuiper rootfs's root password is actually DIFFERENT from the old rootfs/Pluto+ password noted above — confirmed working via plink during Step 0 register-test verification (redacted here too — ask Pari). Don't assume "same as Pluto+" for this board anymore.
 
 **Still outstanding:**
 1. Consider restoring a static-IP config (dhcpcd.conf, matching the old `.110` setup) for consistency across future reboots — not yet done, DHCP `.106` works fine for now but will likely change again on next reboot.
