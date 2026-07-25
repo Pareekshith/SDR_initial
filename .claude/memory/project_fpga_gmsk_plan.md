@@ -222,6 +222,18 @@ ATF result in `runme.log`: "Auto Timing Fix SUCCESS after 0 attempts - final WNS
 
 **Step 0 is DONE.** The full Verilog → IP-packaging → block-design → bitstream → JTAG → Linux-readback loop is proven end-to-end on real hardware, fully decoupled from GMSK correctness questions. Per the diagram artifact's build sequence, **next is Step 1: frequency discriminator** (first real DSP block on the RX AXI-Stream path, per the architecture pivot — see the section above on the TX/RX role swap).
 
+## Step 1 (frequency discriminator) — SIM gate PASSED (2026-07-25)
+
+Implemented `hdl/gmsk_step1_discriminator/gmsk_step1_discriminator.v` per the design doc (`docs/step1_discriminator.html`): delay-and-conjugate-multiply quadrature FM demodulator, AXI4-Stream in/out, one sample per clock, no rate change. Only computes `Im{z[n]*conj(z[n-1])} = Q[n]*I[n-1] - I[n]*Q[n-1]` (2 multiplies, not the full 4-multiply complex product) since the real part is never consumed downstream.
+
+**Interface convention (assumed, not yet confirmed against real hardware):** TDATA packs `{Q[15:0], I[15:0]}`, IQ_WIDTH=16 to match the AD9361 RX chain's native sign-extended word width, OUT_WIDTH=18 (truncates the 33-bit full-precision product down by keeping the top 18 bits). `s_axis_tready` tied high — this is a fixed-rate fabric pipeline with no realistic backpressure scenario, so no stall logic was built. **Must be verified against `axi_ad9361`'s actual output width when this gets wired into the real block design (Step 4 integration)** — this was written and simulated standalone, before that wiring exists.
+
+**SIM gate:** `hdl/gmsk_step1_discriminator/sim/` — `gen_test_vectors.awk` synthesizes a continuous-phase two-tone test stream (MARK=150kHz/SPACE=50kHz per `rf_params.h`, alternating 1,0,1,0,... bit pattern, phase never reset at bit boundaries, matching real continuous-phase FSK) into `test_vectors.hex` ($readmemh format, regenerate via `awk -f gen_test_vectors.awk > test_vectors.hex` — this .hex is gitignored, not committed, since it's trivially regenerable). `tb_gmsk_step1_discriminator.v` feeds it through the DUT and self-checks: each bit segment's output should settle to a clean, consistent level, and MARK's level should be clearly separated from SPACE's (>2x).
+
+**Ran via Vivado's standalone simulator (no project needed):** `xvlog` → `xelab ... -s tb_sim` → `xsim tb_sim -runall`, binaries at `C:\AMDDesignTools\2025.2\Vivado\bin\` (not on PATH — invoke with full path). **Result: TEST PASSED.** MARK segments settled at 4855.0, SPACE at 1658.9 (ratio 2.93x) — matches hand-calculated expected values (`AMPLITUDE^2 * sin(2*pi*f/Fs)`, truncated to OUT_WIDTH) almost exactly, confirming both the Verilog and the small-angle approximation the design doc relies on.
+
+**Not yet done:** Vivado IP packaging (mirroring Step 0's `package_ip.tcl`/`ip_repo/`) and hardware integration (block-design wiring into the real `fmcomms2_zed` project, bitstream rebuild, JTAG, on-air capture per the design doc's HW test plan) — SIM gate passing is the checkpoint reached so far, per the diagram artifact's per-step SIM/HW gate structure.
+
 ## Key concept to remember
 
 The bottleneck is **NOT the GMSK math** — it's learning Vivado's IP Integrator and the AXI-Stream protocol. That is the actual learning curve. The Gaussian filter math and phase accumulation are straightforward once the plumbing is understood.

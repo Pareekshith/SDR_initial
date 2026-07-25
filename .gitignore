@@ -17,3 +17,12 @@ arm-sysroot
 hdl/*/_ip_pkg_proj/
 hdl/*/dfx_runtime.txt
 hdl/*/tcl_log*.txt
+
+# xvlog/xelab/xsim byproducts + generated test vectors (regenerable, see sim/*.awk)
+hdl/*/sim/xsim.dir/
+hdl/*/sim/*.log
+hdl/*/sim/*.pb
+hdl/*/sim/*.jou
+hdl/*/sim/dfx_runtime.txt
+hdl/*/sim/*.hex
+hdl/*/sim/webtalk*
