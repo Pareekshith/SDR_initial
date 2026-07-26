@@ -292,6 +292,8 @@ The very next increment (start of next session): get something **trivially simpl
 
 **This is exactly where to resume next session.** Do not jump back into AD9361/DMA debugging or attempt the full discriminator hardware test again until this baseline is confirmed either way.
 
+**Step0 sanity re-check (2026-07-27): PASSED cleanly, still on the current (combined, has-all-of-Step1) bitstream.** No rebuild needed — `gmsk_step0_regs` was never touched, still present at `0x40000000`. `busybox devmem` ID/SCRATCH/COUNTER all passed exactly as originally on 2026-07-25 (COUNTER `0x83718906` -> `0xBBF7CC16` after 1s). **Meaningful result: everything added for Step1 (discriminator, Concat, constant, NOT gate, ILA, dbg_hub reassignment, both timing fixes) has NOT destabilized or corrupted the basic AXI-Lite/JTAG/Linux round-trip in any detectable way.** Whatever is wrong with the AD9361/DMA path is not broad collateral damage from our changes — it's something narrower. No need for the more expensive "surgically strip Step1 and rebuild a pure Step0-only bitstream" option unless this quick check had failed.
+
 ## Key concept to remember
 
 The bottleneck is **NOT the GMSK math** — it's learning Vivado's IP Integrator and the AXI-Stream protocol. That is the actual learning curve. The Gaussian filter math and phase accumulation are straightforward once the plumbing is understood.
