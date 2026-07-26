@@ -66,8 +66,10 @@ Two SDR boards on the home LAN (192.168.1.0/24, TP-Link router at 192.168.1.1):
 
 **Password correction (2026-07-25):** the fresh Kuiper rootfs's root password is actually DIFFERENT from the old rootfs/Pluto+ password noted above — confirmed working via plink during Step 0 register-test verification (redacted here too — ask Pari). Don't assume "same as Pluto+" for this board anymore.
 
+**ZedBoard IP changed again (2026-07-26): now `192.168.1.104`**, confirmed by matching its known overridden MAC `00:0a:35:00:01:23` in the ARP table after a subnet ping-sweep (`.106` stopped responding after today's JTAG reprogram + power cycles — exactly the "will likely change again on next reboot" outcome outstanding item #1 already warned about). SSH host key and password unchanged, just the IP. Pluto+ unaffected, still `192.168.1.102`. **This will keep happening on every reboot until static IP is configured (still outstanding) — always verify the current IP via ARP/MAC match rather than assuming the last-recorded one still holds.**
+
 **Still outstanding:**
-1. Consider restoring a static-IP config (dhcpcd.conf, matching the old `.110` setup) for consistency across future reboots — not yet done, DHCP `.106` works fine for now but will likely change again on next reboot.
+1. Consider restoring a static-IP config (dhcpcd.conf, matching the old `.110` setup) for consistency across future reboots — not yet done, DHCP IP keeps changing on every reboot (`.106` → `.104` as of 2026-07-26).
 2. **Re-run the JTAG program step** (`fmcomms2_zed.runs\impl_1\system_top.bit` via Vivado Hardware Manager) — this fresh Kuiper image's stock `BOOT.BIN` bitstream is `hdl_2023_r2` (per `axi_sysid`, built 2024-11-01), NOT our timing-fixed custom `hdl_2026_r1` build. Confirmed via serial: `ad9361-phy`, `cf-ad9361-dds-core-lpc`, `cf-ad9361-lpc` all already probe fine on this stock bitstream, so the board is fully usable for the TX/RX role-swap software test right away — the JTAG reprogram is only needed before resuming the custom GMSK IP work.
 3. Resume the TX/RX role-swap test (build `tx_dma_fsk` on ZedBoard → deploy to Pluto+, build+run `rx.c` on ZedBoard) that was interrupted by the original card failure — now unblocked.
 
