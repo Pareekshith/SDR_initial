@@ -27,6 +27,16 @@ ipx::package_project -root_dir $repo_dir -vendor user.org -library user \
     -taxonomy /UserIP -force -import_files
 
 set core [ipx::current_core]
+
+# Vivado's auto-inference only associates aclk with whichever bus interface
+# it finds first (observed: just m_axis). Both s_axis and m_axis actually run
+# off aclk, and Connection Automation uses ASSOCIATED_BUSIF to know that when
+# offering to auto-wire clock/reset — without both listed, automation may only
+# handle one of the two stream interfaces. Mirrors how ADI's own axi_ad9361
+# packaging (axi_ad9361_ip.tcl) explicitly sets this same property.
+set aclk_intf       [ipx::get_bus_interfaces aclk -of_objects $core]
+set assoc_busif_arg [ipx::get_bus_parameters ASSOCIATED_BUSIF -of_objects $aclk_intf]
+set_property value {s_axis:m_axis} $assoc_busif_arg
 set_property name               $ip_name                      $core
 set_property display_name       "GMSK Step 1 Discriminator"   $core
 set_property description        "Delay-and-conjugate-multiply frequency discriminator: turns complex baseband IQ into a per-sample instantaneous-frequency estimate for the RX demod chain." $core
