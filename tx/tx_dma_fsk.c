@@ -3,9 +3,10 @@
  * Runs on : ZedBoard + AD9361
  *
  * Unlike tx.c, this program never switches DDS registers and never sleeps to
- * time an RF bit.  One DMA buffer contains exactly one 50 ms bit:
+ * time an RF bit.  One DMA buffer contains exactly one bit, sized from
+ * FSK_BIT_PERIOD_US (currently 2 ms/bit = 500 bps):
  *
- *   2,304,000 samples/s * 0.050 s = 115,200 IQ samples/bit
+ *   2,304,000 samples/s * 0.002 s = 4,608 IQ samples/bit
  *
  * iio_buffer_push() queues those samples, and the AD9361 sample clock plays
  * them at the exact bit rate.  Linux may prepare the next block early or late,
@@ -33,7 +34,7 @@
 
 #define SAMPLES_PER_BIT ((size_t)(SAMPLE_RATE_HZ * FSK_BIT_PERIOD_US / 1000000LL))
 #define LOGICAL_AMPLITUDE_FRACTION 0.70
-#define INTERFRAME_MARK_BITS 50  /* 2.5 seconds at 50 ms/bit */
+#define INTERFRAME_MARK_BITS 50  /* 100 ms at 2 ms/bit (FSK_BIT_PERIOD_US) */
 
 static volatile sig_atomic_t running = 1;
 

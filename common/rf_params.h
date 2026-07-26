@@ -84,7 +84,7 @@
  */
 #define FSK_TONE_MARK_HZ     150000LL   /* bit '1' MARK  : 150 kHz above LO  */
 #define FSK_TONE_SPACE_HZ     50000LL   /* bit '0' SPACE :  50 kHz above LO  */
-#define FSK_BIT_PERIOD_US     50000     /* 50 ms/bit = 20 bps                 */
+#define FSK_BIT_PERIOD_US      2000     /* 2 ms/bit = 500 bps                 */
 #define FSK_BIT_PERIOD_BUF        5     /* 5 × 10 ms buffers per bit          */
 #define FSK_HALF_BIT_BUF          3     /* 30 ms: safely inside 50 ms start bit */
 #define FSK_MIN_IDLE_BUF          3     /* min MARK buffers before start bit  */
