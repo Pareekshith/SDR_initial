@@ -294,6 +294,25 @@ The very next increment (start of next session): get something **trivially simpl
 
 **Step0 sanity re-check (2026-07-27): PASSED cleanly, still on the current (combined, has-all-of-Step1) bitstream.** No rebuild needed — `gmsk_step0_regs` was never touched, still present at `0x40000000`. `busybox devmem` ID/SCRATCH/COUNTER all passed exactly as originally on 2026-07-25 (COUNTER `0x83718906` -> `0xBBF7CC16` after 1s). **Meaningful result: everything added for Step1 (discriminator, Concat, constant, NOT gate, ILA, dbg_hub reassignment, both timing fixes) has NOT destabilized or corrupted the basic AXI-Lite/JTAG/Linux round-trip in any detectable way.** Whatever is wrong with the AD9361/DMA path is not broad collateral damage from our changes — it's something narrower. No need for the more expensive "surgically strip Step1 and rebuild a pure Step0-only bitstream" option unless this quick check had failed.
 
+### START HERE NEXT SESSION — Step 1a: ILA proof-of-life (agreed plan, not yet implemented, 2026-07-27)
+
+Goal: isolate whether the ILA/`dbg_hub` debug-capture chain itself actually works, completely independent of the AD9361/DMA mystery above — we never once got a confirmed-successful capture of anything all last session, so the observation tool itself is still an open suspect.
+
+**What to build:** a new, tiny (~15 line) module — a free-running counter, nothing else. No AXI-Stream input, no dependency on `axi_ad9361`/`s_axis`/real data at all. It just increments every `aclk`.
+
+**Critical detail — must reuse the exact same suspect path, not an easier one:**
+- Clock/reset: same `aclk`/`aresetn` as `gmsk_step1_discriminator` today, i.e. still wired to the `axi_ad9361_l_clk` net + the `util_vector_logic_0` NOT-gate off `axi_ad9361_rst`. **Do not test on `sys_cpu_clk` instead** — that would prove the ILA works in general, not on the specific `rx_clk` domain that's been showing nothing.
+- Probe target: reuse `system_ila_0`'s existing `probe0`/`probe1` (currently `m_axis_tdata`/`m_axis_tvalid` from the discriminator) — swap the source to the new counter's output + a simple always-1 "valid" (or just probe the counter directly with no valid concept needed, it's always meaningful).
+- Same `dbg_hub` clock reassignment (`sys_cpu_clk`) stays as-is — not being retested, already proven fine as a mechanism (Step0's registers use that same domain successfully).
+
+**Package/build/wire it exactly like `gmsk_step1_discriminator`**: write `.v`, SIM-gate it trivially (a counter is self-evidently correct, but simulate anyway per this project's convention), `package_ip.tcl`, register the repo path, drop it in the block design in place of (or alongside, wired to spare ILA probes) the discriminator's outputs, rebuild, JTAG-program, trigger.
+
+**Interpreting the result:**
+- ILA shows a cleanly incrementing counter → the entire capture chain (ILA, `dbg_hub`, trigger, JTAG readback) is proven sound on `rx_clk`. All suspicion moves cleanly onto "is real AD9361 data available at all" — a much narrower, separate question from here on.
+- ILA still shows **nothing** → the problem has been in the debug infrastructure itself the whole time (trigger condition, probe wiring, `dbg_hub` setup), not AD9361/DMA at all — a smaller, far more tractable thing to debug, and it retroactively means every AD9361-focused theory from the previous session was untestable noise until this is fixed first.
+
+Do not jump back into AD9361/DMA debugging (unbind/rebind tricks, PHY config timing, etc.) until this is resolved either way — it was explicitly agreed to stop entangling those two unknowns.
+
 ## Key concept to remember
 
 The bottleneck is **NOT the GMSK math** — it's learning Vivado's IP Integrator and the AXI-Stream protocol. That is the actual learning curve. The Gaussian filter math and phase accumulation are straightforward once the plumbing is understood.
