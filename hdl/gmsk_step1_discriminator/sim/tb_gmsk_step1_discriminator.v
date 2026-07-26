@@ -17,7 +17,7 @@ module tb_gmsk_step1_discriminator;
     localparam integer SAMPLES_PER_BIT = 480;
     localparam integer NUM_BITS        = 10;
     localparam integer NUM_SAMPLES     = SAMPLES_PER_BIT * NUM_BITS;
-    localparam integer LATENCY         = 3;    // input-to-output pipeline delay, cycles
+    localparam integer LATENCY         = 4;    // input-to-output pipeline delay, cycles (4 since the timing fix)
     localparam integer SETTLE_SAMPLES  = 100;  // skip this many samples per bit before averaging
 
     reg clk = 1'b0;

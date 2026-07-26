@@ -62,42 +62,63 @@ module gmsk_step1_discriminator #
     assign s_axis_tready = 1'b1;
 
     // -----------------------------------------------------------------
-    // Stage 0: 1-sample delay register -> holds z[n-1] for the multiply
-    // that runs the following cycle.
+    // Stage 0/0b: two-deep delay line, both taps registered.
+    //
+    // rx_clk runs at 250 MHz on this board (4ns period) -- far faster than
+    // the 2.304 Msps sample rate. An earlier version multiplied this cycle's
+    // raw s_axis_tdata directly against a registered i_prev/q_prev; timing
+    // closure failed (WNS -0.868ns) because that made one DSP48 operand a
+    // same-cycle hop straight from axi_ad9361's output register, with only
+    // clock-network delay (not logic) eating the 4ns budget (see
+    // project_fpga_gmsk_plan memory for the full report_timing breakdown).
+    // Registering the "current" sample too, so BOTH multiply operands come
+    // from a proper register, gives the placer/DSP48 input pipeline a full
+    // cycle at each hop. Costs one extra cycle of latency, which this
+    // fixed-rate streaming block doesn't care about.
     // -----------------------------------------------------------------
-    reg signed [IQ_WIDTH-1:0] i_prev, q_prev;
-    reg                       valid_d0;
+    reg signed [IQ_WIDTH-1:0] i_d1, q_d1, i_d2, q_d2;
+    reg                       valid_d0, valid_d1;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
-            i_prev   <= {IQ_WIDTH{1'b0}};
-            q_prev   <= {IQ_WIDTH{1'b0}};
+            i_d1     <= {IQ_WIDTH{1'b0}};
+            q_d1     <= {IQ_WIDTH{1'b0}};
+            i_d2     <= {IQ_WIDTH{1'b0}};
+            q_d2     <= {IQ_WIDTH{1'b0}};
             valid_d0 <= 1'b0;
+            valid_d1 <= 1'b0;
         end else begin
             valid_d0 <= s_axis_tvalid;
+            valid_d1 <= valid_d0;
             if (s_axis_tvalid) begin
-                i_prev <= i_in;
-                q_prev <= q_in;
+                i_d1 <= i_in;
+                q_d1 <= q_in;
+            end
+            if (valid_d0) begin
+                i_d2 <= i_d1;
+                q_d2 <= q_d1;
             end
         end
     end
 
     // -----------------------------------------------------------------
     // Stage 1: the two multiplies this block actually needs (real part of
-    // the complex product is never computed).
+    // the complex product is never computed). Both operands are now
+    // registered (i_d1/q_d1 = z[n-1], i_d2/q_d2 = z[n-2]) rather than one
+    // being a raw input wire.
     // -----------------------------------------------------------------
     reg signed [2*IQ_WIDTH-1:0] mult_qi, mult_iq;
-    reg                         valid_d1;
+    reg                         valid_d2;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
             mult_qi  <= {2*IQ_WIDTH{1'b0}};
             mult_iq  <= {2*IQ_WIDTH{1'b0}};
-            valid_d1 <= 1'b0;
+            valid_d2 <= 1'b0;
         end else begin
-            valid_d1 <= valid_d0;
-            mult_qi  <= q_in * i_prev;   // Q[n]  * I[n-1]
-            mult_iq  <= i_in * q_prev;   // I[n]  * Q[n-1]
+            valid_d2 <= valid_d1;
+            mult_qi  <= q_d1 * i_d2;   // Q[n-1] * I[n-2]
+            mult_iq  <= i_d1 * q_d2;   // I[n-1] * Q[n-2]
         end
     end
 
@@ -115,7 +136,7 @@ module gmsk_step1_discriminator #
             m_axis_tvalid <= 1'b0;
             m_axis_tdata  <= {OUT_WIDTH{1'b0}};
         end else begin
-            m_axis_tvalid <= valid_d1;
+            m_axis_tvalid <= valid_d2;
             m_axis_tdata  <= imag_full >>> TRUNC_SHIFT;
         end
     end
