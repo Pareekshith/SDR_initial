@@ -18,6 +18,7 @@ hdl/*/_ip_pkg_proj/
 hdl/*/dfx_runtime.txt
 hdl/*/tcl_log*.txt
 hdl/*/vivado.jou
+hdl/**/iladata.csv
 hdl/*/vivado.log
 hdl/*/vivado_*.backup.jou
 hdl/*/vivado_*.backup.log
