@@ -75,9 +75,32 @@ module gmsk_step1_discriminator #
     // from a proper register, gives the placer/DSP48 input pipeline a full
     // cycle at each hop. Costs one extra cycle of latency, which this
     // fixed-rate streaming block doesn't care about.
+    //
+    // Real-hardware bug found and fixed (2026-08-01): the shift into i_d2/
+    // q_d2 must happen in the SAME cycle/condition as the shift into i_d1/
+    // q_d1, gated only by s_axis_tvalid -- not split across two cycles via
+    // a separately-delayed valid_d0. The simulation testbench drove
+    // s_axis_tvalid high on every single clock (no gaps), which hid this:
+    // with back-to-back valid samples the old two-stage version happened
+    // to work. Real AD9361 data arrives as sparse strobes (~2.3 Msps within
+    // this 250 MHz fabric clock, mostly idle cycles between samples). With
+    // gaps, the old code's `if (valid_d0) i_d2 <= i_d1;` fired exactly one
+    // cycle after a pulse -- but i_d1 had *already* been updated to that
+    // same new sample one cycle earlier (both conditions live in this same
+    // always block), so i_d2 ended up capturing a duplicate of i_d1 instead
+    // of the genuinely previous sample. Two identical I/Q pairs cancel
+    // exactly to zero in the discriminator math below -- confirmed on real
+    // ILA captures: m_axis_tdata was exactly 0 on every single cycle where
+    // m_axis_tvalid read 1, no exceptions. Fix: a single atomic condition
+    // shifts i_d1 into i_d2 (using i_d1's pre-update value, per Verilog
+    // non-blocking-assignment semantics) at the same moment i_in loads into
+    // i_d1, so i_d2 always ends up holding "the sample before the most
+    // recent one" regardless of how many idle cycles separate valid pulses.
+    // Latency drops from 4 cycles to 3 as a side effect (one less delay
+    // stage) -- LATENCY in the testbench must be updated to match.
     // -----------------------------------------------------------------
     reg signed [IQ_WIDTH-1:0] i_d1, q_d1, i_d2, q_d2;
-    reg                       valid_d0, valid_d1;
+    reg                       valid_d1;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -85,18 +108,14 @@ module gmsk_step1_discriminator #
             q_d1     <= {IQ_WIDTH{1'b0}};
             i_d2     <= {IQ_WIDTH{1'b0}};
             q_d2     <= {IQ_WIDTH{1'b0}};
-            valid_d0 <= 1'b0;
             valid_d1 <= 1'b0;
         end else begin
-            valid_d0 <= s_axis_tvalid;
-            valid_d1 <= valid_d0;
+            valid_d1 <= s_axis_tvalid;
             if (s_axis_tvalid) begin
-                i_d1 <= i_in;
-                q_d1 <= q_in;
-            end
-            if (valid_d0) begin
-                i_d2 <= i_d1;
+                i_d2 <= i_d1;   // shift: old "current" becomes "previous"
                 q_d2 <= q_d1;
+                i_d1 <= i_in;   // load the new sample
+                q_d1 <= q_in;
             end
         end
     end

@@ -10,6 +10,20 @@
 //
 // Must match gen_test_vectors.awk's constants exactly.
 //
+// GAP_CYCLES (2026-08-01): real AD9361 data arrives as sparse strobes, not
+// back-to-back every clock -- this testbench originally drove s_axis_tvalid
+// high on every single cycle, which hid a real hardware bug in the DUT's
+// delay-line (i_d2 ended up duplicating i_d1 instead of holding the true
+// previous sample, whenever there were idle cycles between valid pulses --
+// see the DUT's own comment for the full explanation). Driving with a gap
+// between samples exercises that same code path in sim, so this class of
+// bug gets caught here next time instead of only on real hardware via ILA.
+// The capture loop below is now self-synchronizing to m_axis_tvalid pulses
+// rather than indexing off a fixed cycle-latency constant, so it doesn't
+// care how many gap cycles are used or what the DUT's exact pipeline depth
+// is -- it just needs each input sample to eventually produce exactly one
+// output pulse, in order.
+//
 module tb_gmsk_step1_discriminator;
 
     localparam integer IQ_WIDTH        = 16;
@@ -17,7 +31,8 @@ module tb_gmsk_step1_discriminator;
     localparam integer SAMPLES_PER_BIT = 480;
     localparam integer NUM_BITS        = 10;
     localparam integer NUM_SAMPLES     = SAMPLES_PER_BIT * NUM_BITS;
-    localparam integer LATENCY         = 4;    // input-to-output pipeline delay, cycles (4 since the timing fix)
+    localparam integer GAP_CYCLES      = 3;    // idle cycles between valid pulses -- real hardware has many more,
+                                                // this just needs to be >0 to exercise the sparse-valid code path
     localparam integer SETTLE_SAMPLES  = 100;  // skip this many samples per bit before averaging
 
     reg clk = 1'b0;
@@ -55,7 +70,10 @@ module tb_gmsk_step1_discriminator;
         $readmemh("test_vectors.hex", mem);
     end
 
-    // Drive one sample per clock once out of reset.
+    // Drive one sample every (1 + GAP_CYCLES) clocks once out of reset --
+    // a single-cycle tvalid pulse per sample, then idle, matching real
+    // AD9361 data's sparse strobe pattern instead of back-to-back valid.
+    integer g;
     initial begin
         s_axis_tvalid = 1'b0;
         s_axis_tdata  = {2*IQ_WIDTH{1'b0}};
@@ -63,24 +81,29 @@ module tb_gmsk_step1_discriminator;
         repeat (5) @(posedge clk);
         aresetn = 1'b1;
         @(posedge clk);
-        s_axis_tvalid = 1'b1;
         for (idx = 0; idx < NUM_SAMPLES; idx = idx + 1) begin
-            s_axis_tdata = mem[idx];
+            s_axis_tdata  = mem[idx];
+            s_axis_tvalid = 1'b1;
             @(posedge clk);
+            s_axis_tvalid = 1'b0;
+            for (g = 0; g < GAP_CYCLES; g = g + 1)
+                @(posedge clk);
         end
-        s_axis_tvalid = 1'b0;
     end
 
-    // Capture: output for input sample n arrives LATENCY cycles after n was
-    // presented, i.e. at the same wall-clock cycle as input sample n+LATENCY.
+    // Capture: self-synchronizing to m_axis_tvalid pulses rather than a
+    // fixed cycle-latency offset, so it doesn't matter how many gap cycles
+    // separate input samples or exactly how deep the DUT's pipeline is --
+    // each valid output pulse is simply the next captured sample, in order.
     integer cap_idx;
     initial begin
-        cap_idx = -LATENCY;
+        cap_idx = 0;
         forever begin
             @(posedge clk);
-            if (aresetn && cap_idx >= 0 && cap_idx < NUM_SAMPLES)
+            if (aresetn && m_axis_tvalid && cap_idx < NUM_SAMPLES) begin
                 captured[cap_idx] = m_axis_tdata;
-            cap_idx = cap_idx + 1;
+                cap_idx = cap_idx + 1;
+            end
         end
     end
 
@@ -94,10 +117,9 @@ module tb_gmsk_step1_discriminator;
 
     initial begin
         errors = 0;
-        // Wait for drive + capture to finish: NUM_SAMPLES cycles of driving
-        // plus reset lead-in plus pipeline drain.
-        wait (idx >= NUM_SAMPLES);
-        repeat (LATENCY + 10) @(posedge clk);
+        // Wait for every input sample to have produced its captured output.
+        wait (cap_idx >= NUM_SAMPLES);
+        repeat (10) @(posedge clk);
 
         mark_sum = 0.0; mark_cnt = 0;
         space_sum = 0.0; space_cnt = 0;
