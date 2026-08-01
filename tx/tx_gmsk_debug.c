@@ -65,6 +65,14 @@
                                                          * ~1.25MHz occupied
                                                          * bandwidth at this
                                                          * bit rate */
+#define DEBUG_TX_ATTENUATION_MDB 3000                  /* -3dB, near max TX
+                                                         * power (AD9361 range
+                                                         * is 0 to -89.75dB,
+                                                         * 0=max) -- was -20dB
+                                                         * from rf_params.h,
+                                                         * leaving ~17dB of
+                                                         * headroom unused for
+                                                         * a bench debug link */
 #define LOGICAL_AMPLITUDE_FRACTION 0.70
 
 /* PATTERN_BIT_PAIRS must be chosen so the buffer length is phase-continuous
@@ -291,7 +299,7 @@ int main(void)
         iio_channel_attr_write_longlong(tx_phy, "rf_bandwidth", DEBUG_RF_BANDWIDTH_HZ) < 0 ||
         iio_channel_attr_write_longlong(tx_phy, "sampling_frequency", SAMPLE_RATE_HZ) < 0 ||
         iio_channel_attr_write_longlong(tx_phy, "hardwaregain",
-                                        -(TX_ATTENUATION_MDB / 1000)) < 0) {
+                                        -(DEBUG_TX_ATTENUATION_MDB / 1000)) < 0) {
         fprintf(stderr, "ERROR: AD9361 TX configuration failed\n");
         iio_context_destroy(ctx);
         return EXIT_FAILURE;
