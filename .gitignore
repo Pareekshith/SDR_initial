@@ -19,6 +19,16 @@ hdl/*/dfx_runtime.txt
 hdl/*/tcl_log*.txt
 hdl/*/vivado.jou
 hdl/**/iladata.csv
+
+# BOOT.BIN build workspace: keep the recipe (bif, tcl, py scripts), not the
+# generated/extracted binaries or the Vitis FSBL build tree (huge, regenerable)
+hdl/boot_build/fsbl_ws/
+hdl/boot_build/*.xsa
+hdl/boot_build/*.bin
+hdl/boot_build/BOOT.BIN.orig
+hdl/boot_build/BOOT.BIN.new
+hdl/boot_build/.Xil/
+hdl/boot_build/vivado.log
 hdl/*/vivado.log
 hdl/*/vivado_*.backup.jou
 hdl/*/vivado_*.backup.log

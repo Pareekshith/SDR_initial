@@ -1,0 +1,6 @@
+all:
+{
+    [bootloader] C:/Users/Parit/Documents/Projects/SDR_initial/hdl/boot_build/fsbl_ws/fsbl_platform/zynq_fsbl/build/fsbl.elf
+    C:/Users/Parit/Documents/Projects/ADI_hdl/projects/fmcomms2/zed/fmcomms2_zed.runs/impl_1/system_top.bit
+    [load=0x04000000, startup=0x04000000] C:/Users/Parit/Documents/Projects/SDR_initial/hdl/boot_build/uboot_extracted.bin
+}
