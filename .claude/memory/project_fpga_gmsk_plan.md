@@ -313,6 +313,17 @@ Goal: isolate whether the ILA/`dbg_hub` debug-capture chain itself actually work
 
 Do not jump back into AD9361/DMA debugging (unbind/rebind tricks, PHY config timing, etc.) until this is resolved either way — it was explicitly agreed to stop entangling those two unknowns.
 
+### Step 1a implementation progress (2026-08-01)
+
+`gmsk_step1a_ila_counter.v` written (16-bit free-running counter, synchronous active-low reset, no AXI-Stream — deliberately just `aclk`/`aresetn`/`count`, to avoid reintroducing components this test is trying to rule out). SIM gate **PASSED** (held at 0 through reset, increments by exactly 1/clock, clears on mid-stream reset re-assertion). Packaged cleanly as an IP (`hdl/gmsk_step1a_ila_counter/ip_repo/gmsk_step1a_ila_counter/component.xml`, 10.3KB, same benign warning class as the other two IPs — cosmetic description, missing product guide, no `FREQ_HZ`). Files also now tracked by ADI_hdl's own git setup — see [[project_adi_hdl_git_tracking]].
+
+**Block-design wiring done (2026-08-01):**
+- `aclk`/`aresetn` wired to the same suspect nets as the discriminator (`axi_ad9361_l_clk`, `util_vector_logic_0` NOT-gate off `axi_ad9361_rst`) — reusing the exact same clock/reset path, not an easier one.
+- `system_ila_0` probe0 → `count[15:0]` (full 16-bit counter, was the discriminator's `m_axis_tdata`).
+- `system_ila_0` probe1 → `aresetn` (not `count[15]` as originally planned — Vivado's IP Integrator can't drag-connect a single bit out of a multi-bit bus without an explicit `xlslice` utility IP in between, so direct-connect to `count[15]` wasn't possible in the GUI). `aresetn` is an equally-good substitute: confirms the reset path itself isn't stuck low, independent of whether the counter is toggling. No ILA reconfiguration needed either way (both are 1-bit, matching the existing probe1 width).
+
+**Not yet done — exactly where to resume if the session drops:** Generate Output Products on the modified `system.bd` → rebuild bitstream → JTAG-program → open ILA dashboard in Hardware Manager, "Run Trigger Immediate" (no trigger condition needed for a free-running signal) → check probe0 for a clean monotonic ramp and probe1 steady high. This is the actual Step 1a hardware test the whole plan above was building up to.
+
 ## Key concept to remember
 
 The bottleneck is **NOT the GMSK math** — it's learning Vivado's IP Integrator and the AXI-Stream protocol. That is the actual learning curve. The Gaussian filter math and phase accumulation are straightforward once the plumbing is understood.
