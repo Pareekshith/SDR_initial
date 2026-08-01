@@ -74,3 +74,5 @@ Two SDR boards on the home LAN (192.168.1.0/24, TP-Link router at 192.168.1.1):
 3. Resume the TX/RX role-swap test (build `tx_dma_fsk` on ZedBoard → deploy to Pluto+, build+run `rx.c` on ZedBoard) that was interrupted by the original card failure — now unblocked.
 
 **How to apply:** Use these IPs when connecting via SSH, iio_info, GNU Radio IIO blocks, or libiio. Verify with sdr_devices.txt in /home/pari/SDR_Link/.
+
+**ZedBoard SSH password confirmed working (2026-08-01), IP `192.168.1.104`.** Not recorded here in plaintext — these `.claude/memory/*.md` files are git-tracked and already pushed to GitHub ([[project_adi_hdl_git_tracking]]), so a literal credential here would end up committed to a remote host. Ask Pari directly each session; re-verify IP via ARP/MAC match first (see note above — it changes every reboot).
