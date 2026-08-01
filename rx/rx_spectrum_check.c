@@ -31,9 +31,15 @@
 #define DECIMATION_FACTOR           4   /* analyze every fourth ADC sample */
 #define WINDOW_ANALYSIS_SAMPLES   576   /* 2304 / 4 */
 #define ANALYSIS_SAMPLE_RATE  576000LL  /* 2.304 Msps / 4 */
-#define RX_GAIN_DB                 46   /* matches the value already
-                                          * calibrated against real signal
-                                          * amplitude this session */
+#define RX_GAIN_DB                 25   /* was 46 -- cut ~17dB (roughly
+                                          * matching the +17dB TX power
+                                          * increase, -20dB->-3dB attenuation)
+                                          * after confirming heavy ADC
+                                          * clipping (many samples pinned at
+                                          * the +-2048 ceiling) in the TX-vs-RX
+                                          * FFT comparison. Verify against a
+                                          * fresh raw IQ capture, not just
+                                          * this guess. */
 #define DEBUG_RF_BANDWIDTH_HZ 4000000LL  /* wider than rf_params.h's 400 kHz --
                                           * matches tx_gmsk_debug.c's widened
                                           * filter for its faster debug bit

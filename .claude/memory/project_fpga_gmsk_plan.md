@@ -428,6 +428,19 @@ Pari wanted to actually see several MARK/SPACE transitions within a single ILA c
 
 **Where this leaves things:** dynamic range has headroom before the 16-bit signed ceiling if more is wanted (e.g. a further RX gain bump now that a real baseline exists). This debug-signal work (fast bitrate, phase-continuity, TX/RX power tuning) is separate from and doesn't block the discriminator-fix validation above — both are done and confirmed working together on the same live hardware.
 
+## TX-vs-RX FFT comparison caught real ADC clipping, fixed (2026-08-02)
+
+Pari asked whether the TX and RX FFTs "should look almost similar" — answer: the two peaks should land at the same frequencies, but noise floor, cascaded TX+RX filtering, and absolute scale (TX is unitless computed samples, RX is real ADC counts after gain) all mean they won't look identical even when everything's working. Built the actual comparison to check anyway:
+- `tx_fft_dump.c` (scratchpad, not committed): standalone, regenerates the exact same NRZ -> Gaussian filter -> phase-integration math as `tx_gmsk_debug.c` and dumps N samples to CSV, no hardware touched.
+- `rx_iq_dump.c` (scratchpad, not committed): same RX config as `rx_spectrum_check.c`, dumps raw ADC I/Q counts instead of computing Goertzel power.
+- Interactive Chart.js widget: windows both with a Hann window, computes a direct DFT (not FFT -- O(N^2) is trivial in-browser at N=1024, and it sidesteps needing power-of-2-friendly sample counts), overlays TX/RX magnitude in dB normalized to each one's own peak.
+
+**Found real ADC clipping from the raw data alone, before even building the FFT.** RX I/Q samples were pinned at exactly +-2047/2048 (the 12-bit ADC's hard ceiling) an enormous fraction of the time -- a direct consequence of the TX power bump (-20dB -> -3dB, ~17dB) without correspondingly pulling RX gain back down. This explained why the discriminator's dynamic range win from that same TX bump was partly real signal, partly clipping-distortion artifact -- hard-clipping a sinusoid generates odd harmonics that spread energy broadband, which is also why RX's spectrum looked so much noisier than TX's clean two-tone shape (that, plus the RX bandwidth widening to 4MHz admitting ~10x more real ambient RF noise/interference than the original 400kHz filter excluded, and the ordinary thermal/quantization noise floor TX's pure computation simply doesn't have).
+
+**Fixed:** `RX_GAIN_DB` in `rx_spectrum_check.c`: 46dB -> 25dB (~17dB cut, roughly matching the TX power increase). Verified against a fresh raw IQ capture, not just assumed: zero samples now at/near the ADC ceiling (`max_I=2039`, `max_Q=1959`, both comfortably under 2047/2048, versus constant pinning before).
+
+**Not yet done:** re-check the discriminator's dynamic range against this de-clipped signal (the earlier -5..51 range measurement was taken *before* this fix, so it's now known to include some clipping-distortion contribution, not purely real signal) -- and reconsider whether the RX bandwidth needs to stay at the full 4MHz or could come down partway now that clipping is fixed, to cut the ambient-noise floor back down.
+
 ## Context for Win11/WSL setup
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.
