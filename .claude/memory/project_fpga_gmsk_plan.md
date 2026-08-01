@@ -378,6 +378,18 @@ Chose the permanent fix over the faster/narrower `devmem`-poke alternative. Buil
 
 The bottleneck is **NOT the GMSK math** — it's learning Vivado's IP Integrator and the AXI-Stream protocol. That is the actual learning curve. The Gaussian filter math and phase accumulation are straightforward once the plumbing is understood.
 
+## Future option noted (not yet decided, 2026-08-01): no-OS bare-metal Vitis app instead of Linux
+
+Pari has a local clone of ADI's `no-OS` repo at `C:\Users\Parit\Documents\Projects\Non-OS Ad9361\no-OS`. It has a ready-made `projects/ad9361` example with a `boards/iio/zed.conf` matching this exact board+design combo (`CONFIG_XILINX_HDL_DESIGN="fmcomms2"`), plus `dma-example`/`dma-irq-example` variants.
+
+**Why it's appealing:** a no-OS build is a bare-metal Vitis app — no Linux, no kernel driver `probe()` timing, no `dmaengine` framework — so it sidesteps the entire class of bug this session fought (stale driver state after a live JTAG swap, the `dma_channel_rebalance` kernel oops). Talks to `axi_ad9361`/`axi_dmac` directly via register access instead.
+
+**The tradeoff:** it's a different stack from everything built so far (`rx.c`, the SSH/`dmesg`/`devmem` debug workflow) — moving to no-OS means Linux stops booting on this board entirely; FSK/GMSK demod logic would need porting to no-OS's C API rather than reusing `rx.c` as-is.
+
+**Checked no-OS's own network support for remote access without Linux:** its `network/lwip_raw_socket/netdevs/` only covers ADI's own SPI-based Ethernet chips (`adin1110`, `w5500`) — nothing for the ZedBoard's onboard native Gigabit Ethernet (Zynq's GEM + Marvell 88E1510 PHY, `xemacps`, which doesn't appear anywhere in the current no-OS working tree). The realistic path for networking on a bare-metal ZedBoard app would be **Xilinx's own Vitis lwIP library** (bundled with Vitis, added as a platform library component using `xemacps`) — separate infrastructure from no-OS's own network folder.
+
+**Decision deferred until after Step 1 hardware validation succeeds on the current Linux/`BOOT.BIN` stack** — not pursuing this now, just recorded as a real option worth revisiting.
+
 ## Context for Win11/WSL setup
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.
