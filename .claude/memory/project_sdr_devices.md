@@ -17,11 +17,14 @@ Two SDR boards on the home LAN (192.168.1.0/24, TP-Link router at 192.168.1.1):
 - OS: Yocto/ADI Linux (systemd, dhcpcd)
 
 **Pluto+** (Chinese clone of ADALM-PLUTO, Zynq-7010 + AD9361, has Ethernet + SD card)
-- IP (Ethernet): 192.168.1.102 (static via fw_setenv ipaddr_eth)
+- IP (Ethernet): 192.168.1.50 (static via fw_setenv ipaddr_eth — changed 2026-08-01, was .102, see conflict note below)
 - IP (USB tunnel): 192.168.2.1 (always available when USB connected)
 - MAC: 00:0a:35:00:01:22
-- SSH: root@192.168.1.102 or root@192.168.2.1, password: (redacted — ask Pari)
+- SSH: root@192.168.1.50 or root@192.168.2.1, password confirmed working 2026-08-01 (same as ZedBoard's Kuiper rootfs — ask Pari; not stored here, see [[project_adi_hdl_git_tracking]] for why)
+- SSH host key: `SHA256:ZfuqQpjXt2HRRUfiSrc4uNLBZ/ScacJW+fMgTnG/VmE` (same on both interfaces — confirms it's genuinely Pluto+ on both)
 - OS: Buildroot (sysvinit, udhcpc), ADI firmware
+
+**IP conflict discovered and fixed (2026-08-01):** `192.168.1.102` (Pluto+'s old static IP) was silently being answered by a **different device** on the LAN — Windows's ARP table showed it mapped to MAC `7a-7a-db-da-39-bf`, nothing like Pluto+'s real MAC. The router's DHCP pool was handing that same address out to some other device with no awareness of Pluto+'s static claim outside DHCP. Every ping/SSH attempt to `.102` was silently hitting the wrong device (ping succeeded, SSH got a real TCP RST — both from the impostor, not Pluto+). **Diagnosed via the USB tunnel** (`192.168.2.1`, always reachable independent of this bug) — confirmed `eth0` itself was correctly configured (`ip addr show` matched expected IP/MAC, `dropbear` listening on `0.0.0.0:22`), so the bug was purely an LAN-level address collision, not anything wrong on the board. **Fix:** moved to `192.168.1.50` (below the `.100+` range we've seen the router actually hand out via DHCP to the ZedBoard), applied live (`ip addr flush/add`) and persisted (`fw_setenv ipaddr_eth`). Verified via matching SSH host key fingerprint on both the new Ethernet IP and the known-good USB tunnel IP. **If Pluto+ ever becomes unreachable again, don't assume it's the board** — check `arp -a` on the Windows side first for a MAC mismatch before touching any board config, and use the USB tunnel (`192.168.2.1`) as a fallback path to diagnose from inside.
 
 **Why:** Set up during first session. Both boards had the same default Xilinx MAC (00:0a:35:00:01:22) causing ARP conflicts — ZedBoard's MAC was overridden at the OS layer.
 
