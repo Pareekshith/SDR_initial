@@ -48,10 +48,39 @@
 
 #include "../common/rf_params.h"
 
-#define SAMPLES_PER_BIT ((size_t)(SAMPLE_RATE_HZ * FSK_BIT_PERIOD_US / 1000000LL))
+/* Debug-only overrides, NOT the rf_params.h shared values -- this tool has
+ * no obligation to stay within them, it's a standalone debug signal, not
+ * the real link. SAMPLES_PER_BIT=4 (2.304 Msps / 4 = ~1.7us/bit, ~576 kbps)
+ * so the whole cyclic pattern repeats many times within one 65.5us ILA
+ * capture window, instead of covering ~3% of a single real (2ms) bit as
+ * before. DEBUG_RF_BANDWIDTH_HZ is widened well past rf_params.h's 400 kHz
+ * to comfortably cover this rate's true occupied bandwidth (~1.25 MHz by
+ * Carson's rule) with margin, so the AD9361's own channel filter doesn't
+ * smear the transitions we're trying to see. Gaussian shaping below is
+ * nearly a no-op at this few samples/bit regardless of GMSK_BT -- there's
+ * no room left for a meaningful kernel, which is fine here. */
+#define SAMPLES_PER_BIT ((size_t)4)
+#define DEBUG_RF_BANDWIDTH_HZ 4000000LL                /* 4 MHz -- comfortable
+                                                         * margin over the true
+                                                         * ~1.25MHz occupied
+                                                         * bandwidth at this
+                                                         * bit rate */
 #define LOGICAL_AMPLITUDE_FRACTION 0.70
 
-#define PATTERN_BIT_PAIRS 16                          /* 16x "10" = 32 bits/period */
+/* PATTERN_BIT_PAIRS must be chosen so the buffer length is phase-continuous
+ * at the wrap point, not just any convenient count. The deviation term's
+ * contribution to net phase over one period is always exactly zero (equal
+ * +1/-1 NRZ counts, preserved through circular convolution) -- but the
+ * CENTER frequency's contribution is only a whole multiple of 2*pi if
+ * total_samples is a whole multiple of
+ * SAMPLE_RATE_HZ / gcd(center_hz, SAMPLE_RATE_HZ) = 2304000/gcd(100000,2304000)
+ * = 2304000/4000 = 576 samples. This held by coincidence at the original
+ * SAMPLES_PER_BIT=4608 (147456 total = 256x576) but broke silently when
+ * SAMPLES_PER_BIT dropped to 4 for a shorter debug buffer (128 total, not a
+ * multiple of 576) -- see the runtime check below, which would have caught
+ * it. 72 pairs x 4 samples/bit = 576 samples/period, the smallest count
+ * satisfying this at SAMPLES_PER_BIT=4. */
+#define PATTERN_BIT_PAIRS 72
 #define PATTERN_BITS      (PATTERN_BIT_PAIRS * 2)
 #define GMSK_BT            4.0                         /* BT is INVERSELY related to
                                                          * smoothing (sigma ~ 1/BT) --
@@ -214,8 +243,25 @@ int main(void)
         phase_i[n] = cos(phase);
         phase_q[n] = sin(phase);
     }
-    fprintf(stderr, "Net phase over one period: %.4f rad (should be ~0 mod 2*pi "
-            "for a glitch-free loop)\n", fmod(phase, 2.0 * M_PI));
+    /* Wrap to (-pi, pi] and check it's actually close to zero -- a real
+     * check, not just a printed number to eyeball. A bad wrap here means a
+     * phase-discontinuity glitch will appear in the transmitted signal
+     * every time the cyclic buffer loops, which for a short debug buffer
+     * can be frequent enough to dominate what's visible on the ILA. */
+    double wrapped = fmod(phase, 2.0 * M_PI);
+    if (wrapped > M_PI) wrapped -= 2.0 * M_PI;
+    if (wrapped < -M_PI) wrapped += 2.0 * M_PI;
+    fprintf(stderr, "Net phase over one period: %.4f rad (wrapped: %.4f rad, "
+            "should be ~0 for a glitch-free loop)\n", phase, wrapped);
+    if (fabs(wrapped) > 0.01) {
+        fprintf(stderr, "ERROR: buffer is not phase-continuous at the wrap point "
+                "(%.4f rad off) -- adjust PATTERN_BIT_PAIRS so total_samples "
+                "(%zu) is a whole multiple of SAMPLE_RATE_HZ/gcd(center_hz, "
+                "SAMPLE_RATE_HZ) = 576 samples. Refusing to transmit a "
+                "glitchy signal.\n", wrapped, total_samples);
+        free(nrz); free(filtered); free(phase_i); free(phase_q);
+        return EXIT_FAILURE;
+    }
 
     struct iio_context *ctx = iio_create_local_context();
     if (!ctx) {
@@ -242,7 +288,7 @@ int main(void)
     }
 
     if (iio_channel_attr_write_longlong(lo, "frequency", CARRIER_FREQ_HZ) < 0 ||
-        iio_channel_attr_write_longlong(tx_phy, "rf_bandwidth", RF_BANDWIDTH_HZ) < 0 ||
+        iio_channel_attr_write_longlong(tx_phy, "rf_bandwidth", DEBUG_RF_BANDWIDTH_HZ) < 0 ||
         iio_channel_attr_write_longlong(tx_phy, "sampling_frequency", SAMPLE_RATE_HZ) < 0 ||
         iio_channel_attr_write_longlong(tx_phy, "hardwaregain",
                                         -(TX_ATTENUATION_MDB / 1000)) < 0) {

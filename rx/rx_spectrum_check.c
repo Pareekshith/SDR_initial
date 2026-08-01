@@ -34,6 +34,12 @@
 #define RX_GAIN_DB                 46   /* matches the value already
                                           * calibrated against real signal
                                           * amplitude this session */
+#define DEBUG_RF_BANDWIDTH_HZ 4000000LL  /* wider than rf_params.h's 400 kHz --
+                                          * matches tx_gmsk_debug.c's widened
+                                          * filter for its faster debug bit
+                                          * rate; this tool has no obligation
+                                          * to stay within the "real" link's
+                                          * configured bandwidth */
 
 static volatile sig_atomic_t running = 1;
 
@@ -99,7 +105,7 @@ int main(void)
     }
 
     iio_channel_attr_write_longlong(lo_rx,  "frequency",          CARRIER_FREQ_HZ);
-    iio_channel_attr_write_longlong(rx_phy, "rf_bandwidth",       RF_BANDWIDTH_HZ);
+    iio_channel_attr_write_longlong(rx_phy, "rf_bandwidth",       DEBUG_RF_BANDWIDTH_HZ);
     iio_channel_attr_write_longlong(rx_phy, "sampling_frequency", SAMPLE_RATE_HZ);
     iio_channel_attr_write(rx_phy, "gain_control_mode", "manual");
     iio_channel_attr_write_longlong(rx_phy, "hardwaregain", RX_GAIN_DB);
