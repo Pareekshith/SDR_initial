@@ -134,92 +134,166 @@ module gmsk_step2a_interpolator #
     end
 
     // -----------------------------------------------------------------
-    // Stages 3-5: Horner evaluation y = ((v3*mu + v2)*mu + v1)*mu + v0,
-    // one multiply-accumulate per stage (both MAC operands registered each
-    // stage -- same DSP48-friendly pattern gmsk_step1_discriminator's real
-    // timing fix established). mu is unsigned in [0,1) (mu_in / 2^MU_WIDTH);
+    // Stages 3a/3b, 4a/4b, 5a/5b: Horner evaluation
+    // y = ((v3*mu + v2)*mu + v1)*mu + v0, one multiply per "a" stage, one
+    // shift+add per "b" stage. mu is unsigned in [0,1) (mu_in / 2^MU_WIDTH);
     // zero-extended into a signed container one bit wider at each use so
     // the signed(v) * mu multiply isn't silently coerced to unsigned by
     // Verilog's operand-mixing rule (a real correctness pitfall, not just
     // style -- mixing a signed operand with an unsigned one in the same
     // expression makes Verilog treat the whole expression as unsigned).
+    //
+    // Real-hardware bug found and fixed (2026-08-02): an earlier version
+    // computed multiply+shift+add all combinationally in one cycle, using a
+    // single generously-oversized product width shared by every stage (to
+    // work around a separate Verilog width-inference pitfall -- see below).
+    // That oversizing broke DSP48 inference for the smaller multiplies:
+    // ATF reported a genuine (not debug-only) setup violation of -20ns,
+    // traced to gmsk_step2a_interpol_0 itself -- 45 logic levels, 30
+    // CARRY4s, the unmistakable signature of a multiply that fell back to
+    // slow LUT/carry-chain fabric instead of a DSP48. Fix: give each
+    // multiply its own naturally-sized product width (operand widths
+    // summed, no padding) AND register the raw multiply's output in its
+    // own pipeline stage, before the shift+add -- registered-in,
+    // registered-out is what reliably gets Vivado to infer a real DSP48,
+    // matching the discriminator's own real-hardware timing lesson (both
+    // MAC operands registered) one level deeper. Costs 3 extra cycles of
+    // latency (one per Horner stage) -- irrelevant to this fixed-rate
+    // streaming block.
+    //
+    // Multiply width note: assigning a product DIRECTLY into a correctly
+    // sized register (as below) is unambiguous and doesn't suffer the
+    // chained-inline-expression width-inference bug documented earlier in
+    // this file -- that bug was specifically about a multiply's result
+    // being consumed by a FURTHER inline shift+add before ever landing in
+    // a register of its own.
     // -----------------------------------------------------------------
-    localparam integer ACC_WIDTH = NUM_WIDTH + 2;  // guard bits through the MAC chain
+    localparam integer ACC_WIDTH   = NUM_WIDTH + 2;        // guard bits through the MAC chain
+    localparam integer MULW        = MU_WIDTH + 1;         // signed, zero-extended mu container
+    localparam integer PROD3_WIDTH = NUM_WIDTH + MULW;     // v3_2 (NUM_WIDTH) * mu
+    localparam integer PROD_WIDTH  = ACC_WIDTH + MULW;     // acc_3/acc_4     (ACC_WIDTH) * mu
 
-    // Multiply-then-shift result, given its own explicitly-widened signal
-    // rather than written as a chained inline expression -- confirmed by
-    // direct A/B test (see project memory) that XSIM does NOT reliably
-    // give ((A*mu)>>>N)+B's multiply its full natural width when it's
-    // nested inline feeding a narrower target: the exact same arithmetic
-    // gave a wrong answer inline and the right answer once broken into
-    // explicit full-width intermediate wires. Real Verilog width-inference
-    // pitfall, not a one-off mistake -- worth remembering for any future
-    // multiply-accumulate chain in this project.
-    localparam integer PROD_WIDTH = ACC_WIDTH + MU_WIDTH + 1;
+    // ---- Stage 3a: register the raw multiply v3*mu, naturally sized ----
+    reg signed [PROD3_WIDTH-1:0] mult_3;
+    reg signed [NUM_WIDTH-1:0]   v2_3a, v1_3a, v0_3a;
+    reg        [MU_WIDTH-1:0]    mu_3a;
+    reg                          valid_3a;
 
-    reg signed [ACC_WIDTH-1:0] acc_3, acc_4;
-    reg signed [NUM_WIDTH-1:0] v1_3, v0_3, v0_4;
-    reg        [MU_WIDTH-1:0]  mu_d3, mu_d4;
-    reg                        valid_d3, valid_d4;
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            mult_3 <= {PROD3_WIDTH{1'b0}};
+            v2_3a  <= {NUM_WIDTH{1'b0}};
+            v1_3a  <= {NUM_WIDTH{1'b0}};
+            v0_3a  <= {NUM_WIDTH{1'b0}};
+            mu_3a  <= {MU_WIDTH{1'b0}};
+            valid_3a <= 1'b0;
+        end else begin
+            valid_3a <= valid_d2;
+            mult_3   <= v3_2 * $signed({1'b0, mu_d2});
+            v2_3a    <= v2_2;
+            v1_3a    <= v1_2;
+            v0_3a    <= v0_2;
+            mu_3a    <= mu_d2;
+        end
+    end
 
-    // Stage 3: acc_3 = (v3*mu >>> MU_WIDTH) + v2. Carries v0 and v1 forward
-    // (v1 needed at stage 4, v0 needed at stage 5) alongside the running
-    // Horner accumulator and mu.
-    wire signed [PROD_WIDTH-1:0] prod_3   = v3_2 * $signed({1'b0, mu_d2});
-    wire signed [PROD_WIDTH-1:0] shifted_3 = prod_3 >>> MU_WIDTH;
+    // ---- Stage 3b: acc_3 = (mult_3 >>> MU_WIDTH) + v2 ----
+    reg signed [ACC_WIDTH-1:0] acc_3;
+    reg signed [NUM_WIDTH-1:0] v1_3b, v0_3b;
+    reg        [MU_WIDTH-1:0]  mu_3b;
+    reg                        valid_3b;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
             acc_3 <= {ACC_WIDTH{1'b0}};
-            v1_3  <= {NUM_WIDTH{1'b0}};
-            v0_3  <= {NUM_WIDTH{1'b0}};
-            mu_d3 <= {MU_WIDTH{1'b0}};
-            valid_d3 <= 1'b0;
+            v1_3b <= {NUM_WIDTH{1'b0}};
+            v0_3b <= {NUM_WIDTH{1'b0}};
+            mu_3b <= {MU_WIDTH{1'b0}};
+            valid_3b <= 1'b0;
         end else begin
-            valid_d3 <= valid_d2;
-            acc_3 <= shifted_3 + v2_2;
-            v1_3  <= v1_2;
-            v0_3  <= v0_2;
-            mu_d3 <= mu_d2;
+            valid_3b <= valid_3a;
+            acc_3 <= (mult_3 >>> MU_WIDTH) + v2_3a;
+            v1_3b <= v1_3a;
+            v0_3b <= v0_3a;
+            mu_3b <= mu_3a;
         end
     end
 
-    // Stage 4: acc_4 = (acc_3*mu >>> MU_WIDTH) + v1. Carries v0 forward to stage 5.
-    wire signed [PROD_WIDTH-1:0] prod_4    = acc_3 * $signed({1'b0, mu_d3});
-    wire signed [PROD_WIDTH-1:0] shifted_4 = prod_4 >>> MU_WIDTH;
+    // ---- Stage 4a: register the raw multiply acc_3*mu, naturally sized ----
+    reg signed [PROD_WIDTH-1:0] mult_4;
+    reg signed [NUM_WIDTH-1:0]  v1_4a, v0_4a;
+    reg        [MU_WIDTH-1:0]   mu_4a;
+    reg                         valid_4a;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            mult_4 <= {PROD_WIDTH{1'b0}};
+            v1_4a  <= {NUM_WIDTH{1'b0}};
+            v0_4a  <= {NUM_WIDTH{1'b0}};
+            mu_4a  <= {MU_WIDTH{1'b0}};
+            valid_4a <= 1'b0;
+        end else begin
+            valid_4a <= valid_3b;
+            mult_4   <= acc_3 * $signed({1'b0, mu_3b});
+            v1_4a    <= v1_3b;
+            v0_4a    <= v0_3b;
+            mu_4a    <= mu_3b;
+        end
+    end
+
+    // ---- Stage 4b: acc_4 = (mult_4 >>> MU_WIDTH) + v1 ----
+    reg signed [ACC_WIDTH-1:0] acc_4;
+    reg signed [NUM_WIDTH-1:0] v0_4b;
+    reg        [MU_WIDTH-1:0]  mu_4b;
+    reg                        valid_4b;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
             acc_4 <= {ACC_WIDTH{1'b0}};
-            v0_4  <= {NUM_WIDTH{1'b0}};
-            mu_d4 <= {MU_WIDTH{1'b0}};
-            valid_d4 <= 1'b0;
+            v0_4b <= {NUM_WIDTH{1'b0}};
+            mu_4b <= {MU_WIDTH{1'b0}};
+            valid_4b <= 1'b0;
         end else begin
-            valid_d4 <= valid_d3;
-            acc_4 <= shifted_4 + v1_3;
-            v0_4  <= v0_3;
-            mu_d4 <= mu_d3;
+            valid_4b <= valid_4a;
+            acc_4 <= (mult_4 >>> MU_WIDTH) + v1_4a;
+            v0_4b <= v0_4a;
+            mu_4b <= mu_4a;
         end
     end
 
-    // Stage 5: output = (acc_4*mu >>> MU_WIDTH) + v0. The natural scale of
-    // the Horner result already matches the input's scale (Lagrange basis
-    // coefficients sum to 1 at any mu -- this is a weighted average of
-    // x[-1..2], not a growing product like the discriminator's multiply),
-    // so truncating to the low OUT_WIDTH bits is correct here -- unlike
-    // gmsk_step1_discriminator's TRUNC_SHIFT, this isn't a deliberate
-    // multiplicative rescale, the extra ACC_WIDTH-OUT_WIDTH bits are just
-    // guard bits against transient overflow through the MAC chain.
-    wire signed [PROD_WIDTH-1:0] prod_5    = acc_4 * $signed({1'b0, mu_d4});
-    wire signed [PROD_WIDTH-1:0] shifted_5 = prod_5 >>> MU_WIDTH;
-    wire signed [ACC_WIDTH-1:0]  acc_5     = shifted_5 + v0_4;
+    // ---- Stage 5a: register the raw multiply acc_4*mu, naturally sized ----
+    reg signed [PROD_WIDTH-1:0] mult_5;
+    reg signed [NUM_WIDTH-1:0]  v0_5a;
+    reg                         valid_5a;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            mult_5 <= {PROD_WIDTH{1'b0}};
+            v0_5a  <= {NUM_WIDTH{1'b0}};
+            valid_5a <= 1'b0;
+        end else begin
+            valid_5a <= valid_4b;
+            mult_5   <= acc_4 * $signed({1'b0, mu_4b});
+            v0_5a    <= v0_4b;
+        end
+    end
+
+    // ---- Stage 5b: output = (mult_5 >>> MU_WIDTH) + v0. The natural scale
+    // of the Horner result already matches the input's scale (Lagrange
+    // basis coefficients sum to 1 at any mu -- this is a weighted average
+    // of x[-1..2], not a growing product like the discriminator's
+    // multiply), so truncating to the low OUT_WIDTH bits is correct here --
+    // unlike gmsk_step1_discriminator's TRUNC_SHIFT, this isn't a
+    // deliberate multiplicative rescale, the extra guard bits are just
+    // headroom against transient overflow through the MAC chain.
+    wire signed [ACC_WIDTH-1:0] acc_5 = (mult_5 >>> MU_WIDTH) + v0_5a;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
             m_axis_tvalid <= 1'b0;
             m_axis_tdata  <= {OUT_WIDTH{1'b0}};
         end else begin
-            m_axis_tvalid <= valid_d4;
+            m_axis_tvalid <= valid_5a;
             m_axis_tdata  <= acc_5[OUT_WIDTH-1:0];
         end
     end
