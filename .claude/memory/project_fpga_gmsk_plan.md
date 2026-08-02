@@ -489,6 +489,16 @@ Built `hdl/gmsk_step2a_interpolator/gmsk_step2a_interpolator.v` per the [[projec
 
 **Sub-step A is done.** Per the breakdown in [[project_fpga_gmsk_plan]]'s "next stage" discussion: next is sub-step B (NCO/phase accumulator, standalone) or sub-step D (Gardner TED, standalone) — either can go first, both are independent of each other and of this interpolator core.
 
+## gmsk_step0_regs widened with scratch_out, block-design wiring planned (2026-08-02)
+
+Pari wants to wire `gmsk_step2a_interpolator` into the live block design next, chained after the discriminator. Planned connections: `aclk`/`aresetn` reuse the same nets the discriminator/Step1a counter already use (no new NOT gate), `s_axis_tvalid`/`s_axis_tdata` come directly from `gmsk_step1_discrimin_0/m_axis_*` (24-bit, matches the interpolator's `IN_WIDTH` default cleanly), `m_axis_tready` reuses the existing `xlconstant_0` tie-off.
+
+**`mu_in` decided: drive it from `gmsk_step0_regs`'s SCRATCH register** (devmem-pokeable at `0x40000004`) rather than a hardwired constant, so sweeping mu on real hardware doesn't need a bitstream rebuild per value — matches this project's whole "make it pokeable from software" style. `scratch_reg` was previously a purely internal register with no external port, so added `scratch_out` (plain `output wire [31:0]`, mirrors `scratch_reg`, purely additive — SCRATCH's own AXI-Lite read/write behavior unchanged) to `gmsk_step0_regs.v`, repackaged the IP. Dropped an incidental `AddressSegments.csv` byproduct that was sitting in the ip_repo output from the original 2026-07-25 commit — not something `package_ip.tcl` generates or `component.xml` references, safe to lose.
+
+**Also flagged:** the still-open ILA `probe0`-width issue from earlier this session (GUI re-customize needed, Tcl `set_property` didn't stick) is the natural moment to *also* widen `system_ila_0` to 4 probes (adding probe2/probe3 = interpolator's `m_axis_tdata`/`m_axis_tvalid`) in the same GUI visit, rather than a second separate rebuild cycle.
+
+**Not yet done — exactly where to resume:** actually place `gmsk_step2a_interpolator` in the block design (register its IP repo path first: `hdl/gmsk_step2a_interpolator/ip_repo/gmsk_step2a_interpolator`), wire per the plan above (including `scratch_out[15:0]` -> `mu_in`), fix `system_ila_0` probe0's width via the GUI dialog while also adding probe2/probe3, rebuild, redeploy via `BOOT.BIN`, and capture the interpolator's output on real hardware.
+
 ## Context for Win11/WSL setup
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.
