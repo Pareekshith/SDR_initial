@@ -35,8 +35,13 @@
 module gmsk_step1_discriminator #
 (
     parameter integer IQ_WIDTH  = 16,                  // native signed I/Q width
-    parameter integer OUT_WIDTH = 16                   // discriminator output width — must be a
-                                                        // multiple of 8 (AXI4-Stream TDATA rule)
+    parameter integer OUT_WIDTH = 24                   // discriminator output width — must be a
+                                                        // multiple of 8 (AXI4-Stream TDATA rule).
+                                                        // 24 (not 16) so TRUNC_SHIFT stays small
+                                                        // (33-24=9) and the output keeps enough
+                                                        // headroom for real (non-full-scale) AD9361
+                                                        // amplitudes without retuning per RX gain —
+                                                        // see project_fpga_gmsk_plan memory.
 )
 (
     input  wire                          aclk,
