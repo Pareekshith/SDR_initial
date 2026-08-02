@@ -1,0 +1,466 @@
+<title>Step 2a — Cubic Interpolation, Farrow Structure</title>
+<style>
+  :root {
+    --paper: #F2F3EE;
+    --ink: #1B211F;
+    --muted: #6B7269;
+    --border: #CBD0C4;
+    --card-bg: #FDFDFB;
+    --copper: #A85A26;
+    --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC;
+    --teal: #2E8F87;
+    --teal-soft: #CFE7E4;
+    --teal-line: #2E8F87;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131715;
+      --ink: #E7EBE5;
+      --muted: #8D9690;
+      --border: #2B322E;
+      --card-bg: #1A201D;
+      --copper: #DE9257;
+      --copper-strong: #F0AE7A;
+      --copper-soft: #3A2A1C;
+      --teal: #56C6BB;
+      --teal-soft: #16302C;
+      --teal-line: #56C6BB;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131715; --ink: #E7EBE5; --muted: #8D9690; --border: #2B322E;
+    --card-bg: #1A201D; --copper: #DE9257; --copper-strong: #F0AE7A;
+    --copper-soft: #3A2A1C; --teal: #56C6BB; --teal-soft: #16302C; --teal-line: #56C6BB;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F2F3EE; --ink: #1B211F; --muted: #6B7269; --border: #CBD0C4;
+    --card-bg: #FDFDFB; --copper: #A85A26; --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC; --teal: #2E8F87; --teal-soft: #CFE7E4; --teal-line: #2E8F87;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 56px 28px 100px; }
+
+  .eyebrow {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-weight: 700; font-size: clamp(26px, 4.2vw, 36px);
+    letter-spacing: -0.01em; text-wrap: balance; margin: 0 0 10px;
+  }
+  .subtitle { font-size: 17px; color: var(--muted); max-width: 58ch; margin: 0 0 40px; }
+
+  h2 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--copper-strong); font-weight: 700;
+    margin: 48px 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  section:first-of-type h2 { margin-top: 0; }
+  h3 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 15px; color: var(--ink); margin: 26px 0 10px;
+  }
+  p { max-width: 64ch; font-size: 16.5px; margin: 0 0 16px; }
+  .max-none { max-width: none; }
+  strong { color: var(--copper-strong); font-weight: 700; }
+  em { color: var(--ink); }
+  code {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 0.88em; background: var(--teal-soft); color: var(--teal);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  a { color: var(--teal); }
+
+  .callout {
+    background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--teal);
+    border-radius: 8px; padding: 16px 20px; margin: 0 0 20px; box-shadow: var(--shadow);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .k {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 6px;
+  }
+  .callout.copper { border-left-color: var(--copper); }
+  .callout.copper .k { color: var(--copper-strong); }
+
+  /* equation blocks */
+  .eq {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; margin: 0 0 20px; font-size: 15px; overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .eq .line { margin: 4px 0; white-space: pre; }
+  .eq .comment { color: var(--muted); font-style: italic; }
+
+  /* block diagram (matches step1_discriminator.html) */
+  .diagram {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    margin: 8px 0 8px; padding: 26px 20px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+  .dblock {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 12.5px; text-align: center; padding: 12px 14px; border-radius: 8px;
+    border: 1.5px solid var(--border); background: var(--paper); color: var(--ink);
+    flex: none; line-height: 1.35; min-width: 92px;
+  }
+  .dblock.accent { border-color: var(--teal); color: var(--teal); }
+  .dblock.out { border-color: var(--copper); color: var(--copper-strong); }
+  .darrow { flex: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+  .dgroup { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+  .dgroup .caption { font-size: 10px; color: var(--muted); font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; letter-spacing: 0.04em; }
+  .dcol { display: flex; flex-direction: column; gap: 8px; flex: none; }
+
+  figure { margin: 0 0 8px; }
+  figcaption {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; margin-top: 10px;
+  }
+
+  ul.notes { padding-left: 20px; margin: 0 0 20px; }
+  ul.notes li { font-size: 15.5px; margin-bottom: 10px; max-width: 60ch; }
+  ul.notes li::marker { color: var(--copper); }
+
+  /* worked-example table */
+  .tbl-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 420px; }
+  thead th {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    text-align: left; color: var(--muted); background: var(--card-bg);
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: top; background: var(--card-bg); font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13.5px; }
+  tbody td:first-child { font-family: Georgia, serif; font-size: 14.5px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.final td { font-weight: 700; color: var(--copper-strong); }
+
+  /* interactive demo */
+  .demo {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px 22px 18px; margin: 8px 0 8px; box-shadow: var(--shadow);
+  }
+  .demo canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: var(--paper); border: 1px solid var(--border); }
+  .demo-controls { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
+  .demo-controls label { font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; font-size: 12.5px; color: var(--muted); letter-spacing: 0.04em; }
+  .demo-controls input[type=range] { flex: 1; min-width: 160px; accent-color: var(--teal); }
+  .demo-readout {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 13px; color: var(--teal); min-width: 62px; text-align: right;
+  }
+  .demo-coeffs {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 10px;
+    margin-top: 14px; font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13px;
+  }
+  .demo-coeffs div { background: var(--paper); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .demo-coeffs .lbl { color: var(--muted); font-size: 11px; display:block; margin-bottom: 2px; }
+  .demo-y { color: var(--copper-strong); font-weight: 700; }
+  .demo-points-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .demo-points-row label { display: flex; flex-direction: column; gap: 4px; font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; font-size: 11px; color: var(--muted); letter-spacing: 0.03em; }
+  .demo-points-row input[type=number] {
+    width: 64px; font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 13px; padding: 5px 6px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--paper); color: var(--ink);
+  }
+
+  footer { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 480px) {
+    .wrap { padding: 36px 18px 72px; }
+    .diagram { padding: 18px 14px; }
+    .demo { padding: 16px 14px; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Step 2a &middot; Technical Note</p>
+  <h1>Cubic Interpolation, Farrow Structure</h1>
+  <p class="subtitle">How to compute the value of a signal at a moment in time that falls <em>between</em> two real ADC samples &mdash; the building block every symbol-timing-recovery loop is made of.</p>
+
+  <section>
+    <h2>Why interpolate at all?</h2>
+    <p>An ADC only ever hands you samples at fixed instants &mdash; one every <code>1/Fs</code> seconds, locked to <em>your</em> receiver's clock. But the transmitter's symbol clock is a <em>different</em> physical oscillator, running at a very slightly different rate, with no fixed relationship to your sampling instants. The "best" moment to read each symbol &mdash; the middle of its eye, where the signal is cleanest &mdash; essentially never lines up exactly with a sample you actually have.</p>
+    <p>So a timing-recovery receiver needs to answer a question the ADC alone can't: <strong>"what would the signal have measured at some arbitrary moment between two samples I do have?"</strong> That's interpolation. Later, Gardner's algorithm (Step 3) will use the answer to that question, sample after sample, to figure out exactly where the true symbol centers are and keep tracking them as the transmitter's clock drifts. This page is only about the interpolation piece &mdash; how to answer the "what's the value at a fractional position" question at all &mdash; not yet about how the loop decides <em>which</em> position to ask for.</p>
+  </section>
+
+  <section>
+    <h2>Lagrange interpolation, the idea</h2>
+    <p>The simplest possible version: you have two points, and you want the value <em>between</em> them. If you just draw a straight line through them, that's <strong>linear interpolation</strong> &mdash; and it's already an example of the general idea: <em>fit a curve through your known points, then read the curve's value wherever you like.</em></p>
+    <p>Lagrange interpolation is the direct extension of that idea: given <em>N</em> points, there is exactly <strong>one</strong> polynomial of degree <em>N&minus;1</em> that passes through all of them exactly. Two points &rarr; a line (degree 1). Four points &rarr; a cubic (degree 3). This project uses four points, giving a cubic &mdash; a good balance: enough points to bend and capture curvature (linear would just cut a straight chord across a curving signal), but not so many that a distant point still barely visible around outside our window pulls the fit around in ways low-order interpolation is better at avoiding.</p>
+    <div class="callout">
+      <p class="k">The defining property</p>
+      <p>A degree-3 (cubic) interpolant built from 4 points passes through <em>all four of them exactly</em>. That's not a design choice to verify &mdash; it's what "interpolation" (as opposed to "curve fitting" / regression) means by definition. It's also the cleanest way to sanity-check an implementation: feed it points from a genuine cubic function, and the interpolated curve must reproduce that function <em>exactly</em>, with zero error, everywhere &mdash; not approximately. That's exactly how this project's implementation was first checked, before a single line of Verilog existed (see the worked example below).</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Four points, one cubic curve</h2>
+    <p>Label the four samples around the window we're interpolating <em>within</em> as <code>x[&minus;1], x[0], x[1], x[2]</code> &mdash; sitting at integer positions &minus;1, 0, 1, 2. We want the value at position <code>&mu;</code>, where <code>&mu;</code> is a fraction between 0 and 1 &mdash; <code>&mu;=0</code> is exactly <code>x[0]</code>, <code>&mu;=1</code> is exactly <code>x[1]</code>, and anything in between is genuinely "between the samples."</p>
+    <p>Lagrange's construction gives each of the four points its own weighting polynomial (its "basis function") that equals 1 at that point's own position and 0 at every other point's position. Add the four samples together, each multiplied by its own basis function evaluated at <code>&mu;</code>, and you get the interpolated value. Multiplying that all out and collecting terms by power of <code>&mu;</code> gives a clean, hardware-friendly form:</p>
+    <div class="eq">
+      <div class="line">y(&mu;) = v0 + v1&middot;&mu; + v2&middot;&mu;&sup2; + v3&middot;&mu;&sup3;</div>
+      <div class="line"> </div>
+      <div class="line comment">// four FIXED coefficients, computed once per window (mu doesn't appear yet):</div>
+      <div class="line">v0 = x[0]</div>
+      <div class="line">v1 = ( &minus;2&middot;x[&minus;1]  &minus;3&middot;x[0]  +6&middot;x[1]  &minus;x[2] ) / 6</div>
+      <div class="line">v2 = (   x[&minus;1]  &minus;2&middot;x[0]  +x[1]           ) / 2</div>
+      <div class="line">v3 = ( &minus;x[&minus;1]  +3&middot;x[0]  &minus;3&middot;x[1]  +x[2] ) / 6</div>
+    </div>
+    <p>Two quick checks that this is really doing what it claims: set <code>&mu;=0</code> and everything except <code>v0</code> vanishes, leaving <code>y=x[0]</code> exactly. Set <code>&mu;=1</code> and the whole polynomial collapses to <code>y=x[1]</code> exactly (worth verifying by substitution if you want to see it, but it's a direct consequence of the basis functions each being 1 at their own point and 0 at the others). The curve is guaranteed to thread exactly through the two points it's interpolating <em>between</em>, using the outer two points only to shape the bend of the curve connecting them.</p>
+  </section>
+
+  <section>
+    <h2>The Farrow structure: why this form is hardware-friendly</h2>
+    <p>Writing the interpolant as a plain polynomial in <code>&mu;</code> (rather than directly summing four <code>&mu;</code>-dependent Lagrange basis functions) is the entire trick, and it has a name &mdash; the <strong>Farrow structure</strong>. The reason it matters: <code>v0..v3</code> depend only on the four samples, never on <code>&mu;</code>. In a timing-recovery loop, <code>&mu;</code> changes almost every cycle (that's the whole point &mdash; it's the loop's own correction signal), while a fresh sample only arrives once per input clock. Separating "things that depend on the samples" from "the one thing that depends on the loop's current correction" means:</p>
+    <ul class="notes">
+      <li><strong>The expensive part (computing v0..v3) happens once per new sample</strong> &mdash; three sums and a couple of small constant divisions, not repeated for every possible <code>&mu;</code> you might ever ask for.</li>
+      <li><strong>Evaluating at any particular &mu; is cheap</strong> &mdash; just three multiply-accumulates, using <strong>Horner's method</strong> to avoid computing <code>&mu;&sup2;</code>/<code>&mu;&sup3;</code> separately: <code>y = ((v3&middot;&mu; + v2)&middot;&mu; + v1)&middot;&mu; + v0</code>. Same answer as the polynomial above, just nested so each step is one multiply and one add.</li>
+      <li><strong>The same hardware serves any &mu;</strong> &mdash; nothing about the circuit itself needs to change based on what fractional offset the timing loop currently wants; <code>&mu;</code> is just a number fed in.</li>
+    </ul>
+    <figure>
+      <div class="diagram">
+        <div class="dgroup">
+          <div class="dblock accent">x[&minus;1..2]<br>4-tap delay line</div>
+          <span class="caption">AXI-Stream in</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock">v0, v1, v2, v3<br>fixed coefficients</div>
+          <span class="caption">once per sample</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dcol">
+          <div class="dblock">&times;&mu; +v2</div>
+          <div class="dblock">&times;&mu; +v1</div>
+          <div class="dblock">&times;&mu; +v0</div>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock out">y(&mu;)<br>interpolated out</div>
+          <span class="caption">AXI-Stream out</span>
+        </div>
+      </div>
+      <figcaption>Horner's method as three identical multiply-accumulate stages &mdash; &mu; enters fresh at each one, driven live by <code>mu_in</code> today, by the Gardner loop's NCO once Step 3 closes the loop.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Try it: drag &mu; and watch the curve</h2>
+    <div class="demo">
+      <canvas id="farrowCanvas" width="720" height="360"></canvas>
+      <div class="demo-controls">
+        <label for="muSlider">&mu;</label>
+        <input type="range" id="muSlider" min="0" max="1" step="0.01" value="0.5">
+        <span class="demo-readout" id="muReadout">0.50</span>
+      </div>
+      <div class="demo-points-row">
+        <label>x[&minus;1] <input type="number" id="pM1" value="1" step="0.5"></label>
+        <label>x[0] <input type="number" id="p0" value="3" step="0.5"></label>
+        <label>x[1] <input type="number" id="p1" value="4" step="0.5"></label>
+        <label>x[2] <input type="number" id="p2" value="2" step="0.5"></label>
+      </div>
+      <div class="demo-coeffs">
+        <div><span class="lbl">v0</span><span id="cv0">&mdash;</span></div>
+        <div><span class="lbl">v1</span><span id="cv1">&mdash;</span></div>
+        <div><span class="lbl">v2</span><span id="cv2">&mdash;</span></div>
+        <div><span class="lbl">v3</span><span id="cv3">&mdash;</span></div>
+        <div><span class="lbl">y(&mu;)</span><span id="cy" class="demo-y">&mdash;</span></div>
+      </div>
+    </div>
+    <p style="margin-top:14px;">The four dots are the real samples (edit them, they're just numbers). The curve is the unique cubic threading through all four. The highlighted point is <code>y(&mu;)</code> &mdash; drag the slider and watch it slide smoothly from <code>x[0]</code> (at &mu;=0) to <code>x[1]</code> (at &mu;=1), always exactly on the curve, never anywhere else.</p>
+  </section>
+
+  <section>
+    <h2>Worked example, by hand</h2>
+    <p>Using the demo's default numbers &mdash; <code>x[&minus;1]=1, x[0]=3, x[1]=4, x[2]=2</code> &mdash; and asking for the midpoint, <code>&mu;=0.5</code>:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Computation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>v0</td><td>x[0]</td><td>3</td></tr>
+          <tr><td>v1</td><td>(&minus;2&middot;1 &minus;3&middot;3 +6&middot;4 &minus;2) / 6 = 11/6</td><td>1.8333</td></tr>
+          <tr><td>v2</td><td>(1 &minus;2&middot;3 +4) / 2 = &minus;1/2</td><td>&minus;0.5</td></tr>
+          <tr><td>v3</td><td>(&minus;1 +3&middot;3 &minus;3&middot;4 +2) / 6 = &minus;2/6</td><td>&minus;0.3333</td></tr>
+          <tr><td>stage 1</td><td>v3&middot;&mu; + v2 = &minus;0.3333&times;0.5 + (&minus;0.5)</td><td>&minus;0.6667</td></tr>
+          <tr><td>stage 2</td><td>(stage&nbsp;1)&middot;&mu; + v1 = &minus;0.6667&times;0.5 + 1.8333</td><td>1.5</td></tr>
+          <tr><td>stage 3</td><td>(stage&nbsp;2)&middot;&mu; + v0 = 1.5&times;0.5 + 3</td><td class="final">3.75</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Sanity check worth doing once: 3.75 sits between <code>x[0]=3</code> and <code>x[1]=4</code>, as it must for any &mu; strictly between 0 and 1 &mdash; and it leans slightly toward 4, which matches the curve bending upward through that region given the neighboring points. Cross-checking the same numbers directly against the four Lagrange basis functions (rather than the v0..v3/Horner shortcut) gives the identical 3.75 &mdash; two independent routes to the same answer, which is exactly the kind of check worth doing before trusting either one.</p>
+
+    <div class="callout copper">
+      <p class="k">This isn't just theory</p>
+      <p>The real RTL (<code>gmsk_step2a_interpolator.v</code>) implements exactly this &mdash; a 4-tap delay line feeding the v0..v3 computation, then three Horner multiply-accumulate stages, bit-for-bit the structure above. Before writing a line of Verilog, the coefficient formulas were checked in Python against a genuine cubic polynomial &mdash; interpolating a true cubic must reproduce it <em>exactly</em>, zero error, at any point, which is a much stronger check than "looks about right." The RTL itself was then validated against a sine-wave test signal (a sine has an exact, known value at <em>any</em> fractional position, so the test can check real sub-sample accuracy, not just "settles near the right level"), and passed with a worst-case deviation of about 0.2% &mdash; consistent with the small, expected gap between a cubic curve and a sine wave, not a sign of a bug.</p>
+    </div>
+  </section>
+
+  <footer>
+    Step 1 recovered instantaneous frequency from raw IQ. This block answers "what would that signal have read at an arbitrary moment between samples" &mdash; the piece Step 3's Gardner timing loop needs in order to ask "and where, exactly, should that moment be?"
+  </footer>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('farrowCanvas');
+  const ctx = canvas.getContext('2d');
+  const muSlider = document.getElementById('muSlider');
+  const muReadout = document.getElementById('muReadout');
+  const inputs = {
+    m1: document.getElementById('pM1'),
+    p0: document.getElementById('p0'),
+    p1: document.getElementById('p1'),
+    p2: document.getElementById('p2'),
+  };
+  const readouts = {
+    v0: document.getElementById('cv0'),
+    v1: document.getElementById('cv1'),
+    v2: document.getElementById('cv2'),
+    v3: document.getElementById('cv3'),
+    y: document.getElementById('cy'),
+  };
+
+  function isDark() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function colors() {
+    return isDark()
+      ? { ink: '#E7EBE5', muted: '#8D9690', border: '#2B322E', teal: '#56C6BB', copper: '#F0AE7A', paper: '#131715' }
+      : { ink: '#1B211F', muted: '#6B7269', border: '#CBD0C4', teal: '#2E8F87', copper: '#8A4A1E', paper: '#F2F3EE' };
+  }
+
+  function coeffs(xm1, x0, x1, x2) {
+    return {
+      v0: x0,
+      v1: (-2 * xm1 - 3 * x0 + 6 * x1 - x2) / 6,
+      v2: (xm1 - 2 * x0 + x1) / 2,
+      v3: (-xm1 + 3 * x0 - 3 * x1 + x2) / 6,
+    };
+  }
+
+  function evalHorner(c, mu) {
+    return ((c.v3 * mu + c.v2) * mu + c.v1) * mu + c.v0;
+  }
+
+  function draw() {
+    const xm1 = parseFloat(inputs.m1.value) || 0;
+    const x0 = parseFloat(inputs.p0.value) || 0;
+    const x1 = parseFloat(inputs.p1.value) || 0;
+    const x2 = parseFloat(inputs.p2.value) || 0;
+    const mu = parseFloat(muSlider.value);
+    muReadout.textContent = mu.toFixed(2);
+
+    const c = coeffs(xm1, x0, x1, x2);
+    readouts.v0.textContent = c.v0.toFixed(3);
+    readouts.v1.textContent = c.v1.toFixed(3);
+    readouts.v2.textContent = c.v2.toFixed(3);
+    readouts.v3.textContent = c.v3.toFixed(3);
+    const y = evalHorner(c, mu);
+    readouts.y.textContent = y.toFixed(3);
+
+    const col = colors();
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // sample the curve across x in [-1.3, 2.3] to see a little beyond the support points
+    const xMin = -1.3, xMax = 2.3;
+    const samples = [xm1, x0, x1, x2];
+    let yMin = Math.min.apply(null, samples), yMax = Math.max.apply(null, samples);
+    const pad = Math.max(1, (yMax - yMin) * 0.35);
+    yMin -= pad; yMax += pad;
+
+    const marginL = 46, marginR = 20, marginT = 20, marginB = 34;
+    const plotW = W - marginL - marginR, plotH = H - marginT - marginB;
+    function px(x) { return marginL + (x - xMin) / (xMax - xMin) * plotW; }
+    function py(y) { return marginT + plotH - (y - yMin) / (yMax - yMin) * plotH; }
+
+    // axes / gridlines at each integer sample position
+    ctx.strokeStyle = col.border;
+    ctx.lineWidth = 1;
+    [-1, 0, 1, 2].forEach(function (xi) {
+      ctx.beginPath();
+      ctx.moveTo(px(xi), marginT);
+      ctx.lineTo(px(xi), marginT + plotH);
+      ctx.stroke();
+    });
+    ctx.beginPath();
+    ctx.moveTo(marginL, marginT + plotH);
+    ctx.lineTo(marginL + plotW, marginT + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = col.muted;
+    ctx.font = '11px "Cascadia Code", Consolas, monospace';
+    ctx.textAlign = 'center';
+    ['x[-1]', 'x[0]', 'x[1]', 'x[2]'].forEach(function (lbl, i) {
+      ctx.fillText(lbl, px(i - 1), marginT + plotH + 18);
+    });
+
+    // the interpolated curve, evaluated piecewise: for x in [-1,0] and [1,2] we
+    // reuse the SAME cubic (it's one polynomial across the whole window) --
+    // Horner's method above is defined for mu in the [0,1] segment between
+    // x[0] and x[1], so extend by using the same v0..v3 with mu = x-x[0].
+    ctx.strokeStyle = col.teal;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const steps = 200;
+    for (let i = 0; i <= steps; i++) {
+      const x = xMin + (xMax - xMin) * i / steps;
+      const muX = x; // the index axis already has x[0] sitting at position 0,
+                     // which is exactly where mu=0 is defined -- no offset needed
+                     // (mu is a fraction of the unit spacing between x[0] and x[1],
+                     // not related to x0's sample VALUE, despite the name clash)
+      const yv = evalHorner(c, muX);
+      const X = px(x), Y = py(yv);
+      if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+    }
+    ctx.stroke();
+
+    // the four known sample points
+    ctx.fillStyle = col.ink;
+    samples.forEach(function (s, i) {
+      ctx.beginPath();
+      ctx.arc(px(i - 1), py(s), 4.5, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+
+    // the live interpolated point at the current mu (between x[0] and x[1])
+    ctx.fillStyle = col.copper;
+    ctx.beginPath();
+    ctx.arc(px(mu), py(y), 6, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = col.paper;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  muSlider.addEventListener('input', draw);
+  Object.values(inputs).forEach(function (el) { el.addEventListener('input', draw); });
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+
+  draw();
+})();
+</script>
