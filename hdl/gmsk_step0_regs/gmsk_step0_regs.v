@@ -13,6 +13,12 @@
 //   0x8  COUNTER  read-only   free-running, incremented every S_AXI_ACLK
 //   0xC  (reserved, reads 0)
 //
+// scratch_out (2026-08-02): SCRATCH's value, exposed as a plain output port
+// so other IP in the block design can be driven live from software (devmem
+// a write to 0x40000004, no rebuild) instead of a hardwired constant -- e.g.
+// gmsk_step2a_interpolator's mu_in. Purely additive: SCRATCH's own AXI-Lite
+// read/write behavior is unchanged, this just mirrors the same register out.
+//
 module gmsk_step0_regs #
 (
     parameter integer C_S_AXI_DATA_WIDTH = 32,
@@ -44,7 +50,9 @@ module gmsk_step0_regs #
     output wire [C_S_AXI_DATA_WIDTH-1:0]     S_AXI_RDATA,
     output wire [1:0]                        S_AXI_RRESP,
     output wire                              S_AXI_RVALID,
-    input  wire                              S_AXI_RREADY
+    input  wire                              S_AXI_RREADY,
+
+    output wire [31:0]                       scratch_out
 );
 
     localparam integer ADDR_LSB          = 2;   // 32-bit-aligned registers
@@ -91,6 +99,8 @@ module gmsk_step0_regs #
 
     reg [31:0] scratch_reg;
     integer    byte_index;
+
+    assign scratch_out = scratch_reg;
 
     always @(posedge S_AXI_ACLK) begin
         if (!S_AXI_ARESETN) begin
