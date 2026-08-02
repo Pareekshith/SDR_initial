@@ -71,9 +71,15 @@ module gmsk_step2a_interpolator #
     // Interpolation happens between x_0 and x_1, using x_m1/x_2 as the
     // outer Lagrange support points.
     // -----------------------------------------------------------------
+    // x_m1..x_2 are deliberately NOT marked srl_style -- each tap is read
+    // directly by Stage 2's combinational coefficient math every cycle, so
+    // Vivado can't SRL-extract them anyway (SRL extraction only applies
+    // when the intermediate taps are otherwise unused). mu_d1/valid_d1
+    // marked defensively -- cheap insurance, same reasoning as the Horner
+    // stages below.
     reg signed [IN_WIDTH-1:0] x_m1, x_0, x_1, x_2;
-    reg        [MU_WIDTH-1:0] mu_d1;
-    reg                       valid_d1;
+    (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_d1;
+    (* srl_style = "register" *) reg                valid_d1;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -112,8 +118,8 @@ module gmsk_step2a_interpolator #
     wire signed [NUM_WIDTH-1:0] x_2_w  = {{4{x_2[IN_WIDTH-1]}},  x_2};
 
     reg signed [NUM_WIDTH-1:0] v0_2, v1_2, v2_2, v3_2;
-    reg        [MU_WIDTH-1:0]  mu_d2;
-    reg                        valid_d2;
+    (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_d2;
+    (* srl_style = "register" *) reg                valid_d2;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -174,10 +180,26 @@ module gmsk_step2a_interpolator #
     localparam integer PROD_WIDTH  = ACC_WIDTH + MULW;     // acc_3/acc_4     (ACC_WIDTH) * mu
 
     // ---- Stage 3a: register the raw multiply v3*mu, naturally sized ----
-    reg signed [PROD3_WIDTH-1:0] mult_3;
-    reg signed [NUM_WIDTH-1:0]   v2_3a, v1_3a, v0_3a;
-    reg        [MU_WIDTH-1:0]    mu_3a;
-    reg                          valid_3a;
+    //
+    // srl_style="register" on every pure "carry this value forward N cycles
+    // unchanged" signal below (v0/v1/v2/mu/valid across stages 3a-5a): a
+    // second real-hardware bug found and fixed (2026-08-02), one rebuild
+    // after the multiply-width fix above. WNS was still catastrophically
+    // negative (-20ns class) post-fix, but the failing path moved --
+    // x_1_reg[4] -> v1_3a_reg[25]_srl2..._srlopt, 38 logic levels, 27
+    // CARRY4s. The "_srlopt" name is the tell: Vivado's synthesizer
+    // recognized "v1_3a <= v1_2, then v1_3b <= v1_3a, then v1_4a <= v1_3b"
+    // as a textbook shift-register pattern and opportunistically converted
+    // it from plain flip-flops into an SRL16/32 primitive (a space-saving
+    // optimization), which then placed/routed badly against the nearby
+    // CARRY4-heavy multiply logic. Forcing srl_style="register" tells
+    // synthesis "no, keep these as real flip-flops" -- the standard,
+    // documented fix for exactly this class of Vivado-introduced timing
+    // surprise in a pipeline that was designed assuming FF-based stages.
+    (* srl_style = "register" *) reg signed [PROD3_WIDTH-1:0] mult_3;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]   v2_3a, v1_3a, v0_3a;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]    mu_3a;
+    (* srl_style = "register" *) reg                          valid_3a;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -199,9 +221,9 @@ module gmsk_step2a_interpolator #
 
     // ---- Stage 3b: acc_3 = (mult_3 >>> MU_WIDTH) + v2 ----
     reg signed [ACC_WIDTH-1:0] acc_3;
-    reg signed [NUM_WIDTH-1:0] v1_3b, v0_3b;
-    reg        [MU_WIDTH-1:0]  mu_3b;
-    reg                        valid_3b;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v1_3b, v0_3b;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]  mu_3b;
+    (* srl_style = "register" *) reg                        valid_3b;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -221,9 +243,9 @@ module gmsk_step2a_interpolator #
 
     // ---- Stage 4a: register the raw multiply acc_3*mu, naturally sized ----
     reg signed [PROD_WIDTH-1:0] mult_4;
-    reg signed [NUM_WIDTH-1:0]  v1_4a, v0_4a;
-    reg        [MU_WIDTH-1:0]   mu_4a;
-    reg                         valid_4a;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v1_4a, v0_4a;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]  mu_4a;
+    (* srl_style = "register" *) reg                        valid_4a;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -243,9 +265,9 @@ module gmsk_step2a_interpolator #
 
     // ---- Stage 4b: acc_4 = (mult_4 >>> MU_WIDTH) + v1 ----
     reg signed [ACC_WIDTH-1:0] acc_4;
-    reg signed [NUM_WIDTH-1:0] v0_4b;
-    reg        [MU_WIDTH-1:0]  mu_4b;
-    reg                        valid_4b;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v0_4b;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]  mu_4b;
+    (* srl_style = "register" *) reg                        valid_4b;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -263,8 +285,8 @@ module gmsk_step2a_interpolator #
 
     // ---- Stage 5a: register the raw multiply acc_4*mu, naturally sized ----
     reg signed [PROD_WIDTH-1:0] mult_5;
-    reg signed [NUM_WIDTH-1:0]  v0_5a;
-    reg                         valid_5a;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v0_5a;
+    (* srl_style = "register" *) reg                        valid_5a;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
