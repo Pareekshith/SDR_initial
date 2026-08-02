@@ -36,6 +36,14 @@ hdl/*/vivado.log
 hdl/*/vivado_*.backup.jou
 hdl/*/vivado_*.backup.log
 
+# Vivado batch-mode session logs written to repo root (when vivado -mode
+# batch is invoked from here targeting a project elsewhere, e.g. ADI_hdl)
+/vivado.jou
+/vivado.log
+/dfx_runtime.txt
+/vivado_*.backup.jou
+/vivado_*.backup.log
+
 # xvlog/xelab/xsim byproducts + generated test vectors (regenerable, see sim/*.awk)
 hdl/*/sim/xsim.dir/
 hdl/*/sim/*.log

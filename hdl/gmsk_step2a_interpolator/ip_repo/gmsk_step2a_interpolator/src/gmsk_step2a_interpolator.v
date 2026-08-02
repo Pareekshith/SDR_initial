@@ -102,11 +102,37 @@ module gmsk_step2a_interpolator #
     end
 
     // -----------------------------------------------------------------
-    // Stage 2: Lagrange coefficients v0..v3, computed from the now-stable
-    // registered delay-line taps -- one full cycle after the shift, never
-    // combinationally chained with the shift itself (same caution as
-    // above). Common width NUM_WIDTH for all four so the Horner stages
-    // below can treat them uniformly.
+    // Stages 2a/2b/2c: Lagrange coefficients v0..v3, computed from the
+    // now-stable registered delay-line taps -- one full cycle after the
+    // shift, never combinationally chained with the shift itself (same
+    // caution as above). Common width NUM_WIDTH for all four so the Horner
+    // stages below can treat them uniformly.
+    //
+    // Real-hardware bug found and fixed (2026-08-03), after the DSP48 and
+    // SRL fixes above still left WNS around -20ns: the failing path had
+    // moved AGAIN, this time to x_1_reg -> v1_2_reg -- i.e. THIS stage,
+    // which was never touched by either earlier fix. 23.7ns / 39 logic
+    // levels / 30 CARRY4s computing a single coefficient
+    // (-2*x[-1]-3*x[0]+6*x[1]-x[2])/6 combinationally in one cycle. Same
+    // underlying lesson as the Horner stages -- constant multiplies by
+    // non-power-of-2 values (2, 3, 6) plus a constant division, all
+    // combined in one un-pipelined cycle, are NOT free at this clock rate
+    // for NUM_WIDTH-wide operands, even though "small constant" made them
+    // look cheap on paper. Fix: split into three sub-stages -- scale
+    // (single shift/shift-add each), sum (pure adds of already-scaled
+    // registered values, no multiplies), divide (isolated in its own
+    // cycle, same as every other constant-divisor operation in this
+    // module). Costs 2 more cycles of latency, irrelevant to this
+    // fixed-rate block.
+    //
+    // Correctness note: x_m1/x_0/x_1/x_2 are free-running taps that can
+    // shift to a NEWER window on the very next valid sample. Stage 2b
+    // cannot reference them again a cycle after Stage 2a already sampled
+    // them -- it would silently mix an old (scaled) term from window W
+    // with a new (re-read) term from window W+1. So Stage 2a registers
+    // PLAIN forwarded copies of every tap Stage 2b still needs, alongside
+    // the scaled terms -- Stage 2b onward never touches x_m1/x_0/x_1/x_2
+    // directly again.
     // -----------------------------------------------------------------
     localparam integer NUM_WIDTH = IN_WIDTH + 4;  // headroom for the widest
                                                    // coefficient sum (v1's
@@ -117,6 +143,65 @@ module gmsk_step2a_interpolator #
     wire signed [NUM_WIDTH-1:0] x_1_w  = {{4{x_1[IN_WIDTH-1]}},  x_1};
     wire signed [NUM_WIDTH-1:0] x_2_w  = {{4{x_2[IN_WIDTH-1]}},  x_2};
 
+    // ---- Stage 2a: scale terms (each a single shift or shift+add) and
+    // forward the plain taps Stage 2b still needs. ----
+    reg signed [NUM_WIDTH-1:0] m1x2_2a, x0x3_2a, x0x2_2a, x1x3_2a;
+    reg signed [NUM_WIDTH-1:0] xm1_2a, x0_2a, x1_2a, x2_2a;
+    (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2a;
+    (* srl_style = "register" *) reg                valid_2a;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            m1x2_2a <= {NUM_WIDTH{1'b0}};
+            x0x3_2a <= {NUM_WIDTH{1'b0}};
+            x0x2_2a <= {NUM_WIDTH{1'b0}};
+            x1x3_2a <= {NUM_WIDTH{1'b0}};
+            xm1_2a  <= {NUM_WIDTH{1'b0}};
+            x0_2a   <= {NUM_WIDTH{1'b0}};
+            x1_2a   <= {NUM_WIDTH{1'b0}};
+            x2_2a   <= {NUM_WIDTH{1'b0}};
+            mu_2a    <= {MU_WIDTH{1'b0}};
+            valid_2a <= 1'b0;
+        end else begin
+            valid_2a <= valid_d1;
+            mu_2a    <= mu_d1;
+            m1x2_2a <= x_m1_w <<< 1;                // 2*x[-1]
+            x0x3_2a <= x_0_w + (x_0_w <<< 1);        // 3*x[0]
+            x0x2_2a <= x_0_w <<< 1;                  // 2*x[0]
+            x1x3_2a <= x_1_w + (x_1_w <<< 1);         // 3*x[1] (6*x[1] = this <<< 1, done in 2b)
+            xm1_2a  <= x_m1_w;
+            x0_2a   <= x_0_w;
+            x1_2a   <= x_1_w;
+            x2_2a   <= x_2_w;
+        end
+    end
+
+    // ---- Stage 2b: sum into numerators (pure adds of pre-scaled/plain
+    // registered values, no multiplies) -- division not yet applied. ----
+    reg signed [NUM_WIDTH-1:0] num_v1_2b, num_v2_2b, num_v3_2b, v0_2b;
+    (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2b;
+    (* srl_style = "register" *) reg                valid_2b;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            num_v1_2b <= {NUM_WIDTH{1'b0}};
+            num_v2_2b <= {NUM_WIDTH{1'b0}};
+            num_v3_2b <= {NUM_WIDTH{1'b0}};
+            v0_2b     <= {NUM_WIDTH{1'b0}};
+            mu_2b    <= {MU_WIDTH{1'b0}};
+            valid_2b <= 1'b0;
+        end else begin
+            valid_2b <= valid_2a;
+            mu_2b    <= mu_2a;
+            num_v1_2b <= -m1x2_2a - x0x3_2a + (x1x3_2a <<< 1) - x2_2a;  // -2xm1-3x0+6x1-x2
+            num_v2_2b <= xm1_2a - x0x2_2a + x1_2a;                       // xm1-2x0+x1
+            num_v3_2b <= -xm1_2a + x0x3_2a - x1x3_2a + x2_2a;            // -xm1+3x0-3x1+x2
+            v0_2b     <= x0_2a;
+        end
+    end
+
+    // ---- Stage 2c: apply the constant division, isolated in its own
+    // cycle same as every other constant-divisor op in this module. ----
     reg signed [NUM_WIDTH-1:0] v0_2, v1_2, v2_2, v3_2;
     (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_d2;
     (* srl_style = "register" *) reg                valid_d2;
@@ -130,12 +215,12 @@ module gmsk_step2a_interpolator #
             mu_d2    <= {MU_WIDTH{1'b0}};
             valid_d2 <= 1'b0;
         end else begin
-            valid_d2 <= valid_d1;
-            mu_d2    <= mu_d1;
-            v0_2 <= x_0_w;
-            v1_2 <= (-2*x_m1_w - 3*x_0_w + 6*x_1_w - x_2_w) / 6;
-            v2_2 <= (x_m1_w - 2*x_0_w + x_1_w) / 2;
-            v3_2 <= (-x_m1_w + 3*x_0_w - 3*x_1_w + x_2_w) / 6;
+            valid_d2 <= valid_2b;
+            mu_d2    <= mu_2b;
+            v0_2 <= v0_2b;
+            v1_2 <= num_v1_2b / 6;
+            v2_2 <= num_v2_2b / 2;
+            v3_2 <= num_v3_2b / 6;
         end
     end
 
