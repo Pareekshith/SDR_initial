@@ -291,9 +291,22 @@
 <div class="wrap">
   <p class="eyebrow">SDR_Link · RX Build Plan</p>
   <h1>The TX side is trivial. The RX side is the whole project.</h1>
-  <p class="lede">TX transmits a fixed test frame once a second: an alternating bit pattern followed by a sync byte. Nothing adaptive, nothing to decode on that end &mdash; it's just a clean, repeatable signal to demodulate against. <b>Everything hard lives on the ZedBoard's RX side</b>, broken into seven gated steps so a failure at any point points at exactly one block.</p>
+  <p class="lede">TX transmits a fixed test frame once a second: an alternating bit pattern followed by a sync byte. Nothing adaptive, nothing to decode on that end &mdash; it's just a clean, repeatable signal to demodulate against. <b>Everything hard lives on the ZedBoard's RX side</b>, broken into gated steps so a failure at any point points at exactly one block.</p>
 
   <div class="frame-panel">
+    <p class="label">Target link requirements (end goal &mdash; steps below build up to this)</p>
+    <div class="frame-cadence" style="margin-top:0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>
+      <b>10&nbsp;Mbps</b>&nbsp;GMSK &middot; 4 samples/symbol &middot; ADC/DAC at 40&nbsp;Msps &mdash; a ~1150&times; drop in oversampling versus today's bring-up link (4608&nbsp;samples/symbol at 500&nbsp;bps), which is why timing recovery (Steps 2&ndash;3 below) goes from optional to load-bearing.
+    </div>
+    <div class="frame-cadence">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3 8 4-16 3 8h6"/></svg>
+      Beyond the base link: <b>frequency-hopping spread spectrum (FHSS)</b> and <b>forward error correction (FEC)</b> &mdash; see Steps 8&ndash;9.
+    </div>
+  </div>
+
+  <div class="frame-panel">
+    <p class="label">Current bring-up link (what Steps 0&ndash;1 are validated against today)</p>
     <p class="label">TX frame (fixed, repeats every 1000&nbsp;ms)</p>
     <div class="frame-strip">
       <div class="bit">1</div><div class="bit">0</div><div class="bit">1</div><div class="bit">0</div>
@@ -401,9 +414,48 @@
       </div>
     </div>
 
+    <div class="step planned">
+      <div class="node-col"><div class="node"></div></div>
+      <div class="card">
+        <div class="card-top">
+          <h2 class="card-title">Step 7 &middot; Rate/modulation upgrade &mdash; true GMSK @ 10&nbsp;Mbps, 4&nbsp;sps</h2>
+          <span class="status-pill">Planned</span>
+        </div>
+        <p class="step-tag">2-FSK bring-up link &rarr; Gaussian-filtered MSK</p>
+        <p class="card-desc">Replace the bring-up link's 2-FSK tones with real Gaussian-pulse-shaped MSK (TX-side work &mdash; <code>tx_dma_fsk.c</code>/debug tools are 2-FSK, not GMSK, so this needs a real Gaussian filter on TX too). ADC/DAC move from 2.304&nbsp;Msps to 40&nbsp;Msps. Steps 2&ndash;6's logic is reused, but must now run correctly with ~4 samples/symbol instead of ~4608 &mdash; the interpolator/Gardner loop that was easy at the bring-up rate becomes the thing that makes or breaks the link.</p>
+        <div class="gate"><b>Test gate</b><span>Real over-the-air 10&nbsp;Mbps GMSK link decodes a known test pattern with a low, measured bit error rate.</span></div>
+      </div>
+    </div>
+
+    <div class="step planned">
+      <div class="node-col"><div class="node"></div></div>
+      <div class="card">
+        <div class="card-top">
+          <h2 class="card-title">Step 8 &middot; Frequency-hopping spread spectrum (FHSS)</h2>
+          <span class="status-pill">Planned</span>
+        </div>
+        <p class="step-tag">hop sequence &rarr; synchronized LO retuning &rarr; dehop</p>
+        <p class="card-desc">Shared hop sequence generator on TX and RX, synchronized hop timing, LO retuning within the hop-to-hop budget (PLL settling time matters here), and dehopping before the signal reaches the Step&nbsp;1 discriminator.</p>
+        <div class="gate"><b>Test gate</b><span>RX stays synchronized and keeps decoding across programmed hops without an external re-sync.</span></div>
+      </div>
+    </div>
+
+    <div class="step planned">
+      <div class="node-col"><div class="node"></div></div>
+      <div class="card">
+        <div class="card-top">
+          <h2 class="card-title">Step 9 &middot; Forward error correction (FEC)</h2>
+          <span class="status-pill">Planned</span>
+        </div>
+        <p class="step-tag">coding to be chosen &rarr; encode (TX) / decode (RX)</p>
+        <p class="card-desc">Add a code sized to fit the fabric resource/latency budget at 10&nbsp;Mbps (e.g. convolutional + Viterbi is the usual first candidate). Sits after Step&nbsp;6's frame sync, ahead of payload delivery.</p>
+        <div class="gate"><b>Test gate</b><span>Measurable BER improvement over the uncoded Step&nbsp;7 link at a fixed injected noise/attenuation level.</span></div>
+      </div>
+    </div>
+
   </div>
 
   <footer>
-    Given the frame carries no length/payload field, Step&nbsp;6 is effectively the finish line for this phase &mdash; a repeatable once-a-second lock is the milestone, not arbitrary payload decoding.
+    Steps 0&ndash;6 (at the bring-up link's 500&nbsp;bps / ~4608 samples/symbol) prove each RX block in isolation where timing margin is generous and a failure points at exactly one stage. Step&nbsp;6 is the finish line for <i>that</i> phase, not the project &mdash; the real target is Step&nbsp;7's 10&nbsp;Mbps GMSK link, then FHSS (Step&nbsp;8) and FEC (Step&nbsp;9) on top of it.
   </footer>
 </div>
