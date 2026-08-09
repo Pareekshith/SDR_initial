@@ -233,9 +233,84 @@ module gmsk_step2a_interpolator #
     localparam integer SHIFT6 = 20;
     localparam integer RECIPW = NUM_WIDTH + SHIFT6 + 1;  // natural width of num*RECIP6
 
-    // ---- Stage 2c: register the raw reciprocal-multiplies for v1/v3;
-    // v2's /2 is a plain shift, computed directly (no multiply, safe to
-    // finish here); v0/mu/valid forwarded.
+    // Real-hardware bug found and fixed (2026-08-09), a SIXTH instance,
+    // caught on the SAME rebuild as the Horner hi/lo split fix (see that
+    // fix's comment for the full DSP48E1-operand-limit explanation): once
+    // the three Horner multiplies stopped being the worst path, the exact
+    // same problem showed up here instead -- recip_v3_2c (DSP48-to-DSP48,
+    // PCIN cascade) -- because num_v1_2b/num_v3_2b are also NUM_WIDTH=28
+    // bits, past the 25-bit single-DSP48 "A" operand limit, same as v3_2
+    // was. Missed this pair of multiplies when applying the hi/lo split
+    // the first time (only the three Horner-stage multiplies got it).
+    // Same fix, same LOBITS=15 split point, applied here too -- except the
+    // second operand (RECIP6) is a compile-time CONSTANT, not a variable
+    // register, so there's no second operand to split, just the one wide
+    // numerator.
+    localparam integer RCLOBITS   = 15;
+    localparam integer RCHI_WIDTH = NUM_WIDTH - RCLOBITS;  // 13
+    localparam integer RC_RECIPW  = 18;  // bits needed for RECIP6=174763 (< 2^18)
+
+    // ---- Stage 2c1: split num_v1_2b/num_v3_2b into hi/lo. ----
+    (* srl_style = "register" *) reg signed [RCHI_WIDTH-1:0] v1hi_2c1, v3hi_2c1;
+    (* srl_style = "register" *) reg        [RCLOBITS-1:0]   v1lo_2c1, v3lo_2c1;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]  v0_2c1, v2_2c1;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]   mu_2c1;
+    (* srl_style = "register" *) reg                         valid_2c1;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            v1hi_2c1 <= {RCHI_WIDTH{1'b0}};
+            v3hi_2c1 <= {RCHI_WIDTH{1'b0}};
+            v1lo_2c1 <= {RCLOBITS{1'b0}};
+            v3lo_2c1 <= {RCLOBITS{1'b0}};
+            v0_2c1 <= {NUM_WIDTH{1'b0}};
+            v2_2c1 <= {NUM_WIDTH{1'b0}};
+            mu_2c1    <= {MU_WIDTH{1'b0}};
+            valid_2c1 <= 1'b0;
+        end else begin
+            valid_2c1 <= valid_2b;
+            mu_2c1    <= mu_2b;
+            v1hi_2c1 <= num_v1_2b >>> RCLOBITS;
+            v3hi_2c1 <= num_v3_2b >>> RCLOBITS;
+            v1lo_2c1 <= num_v1_2b[RCLOBITS-1:0];
+            v3lo_2c1 <= num_v3_2b[RCLOBITS-1:0];
+            v0_2c1 <= v0_2b;
+            v2_2c1 <= num_v2_2b >>> 1;   // /2, exact, trivially fast
+        end
+    end
+
+    // ---- Stage 2c2: the partial-product multiplies against the RECIP6
+    // constant, each single-DSP48-safe. ----
+    (* srl_style = "register" *) reg signed [RCHI_WIDTH+RC_RECIPW-1:0] v1ph_2c2, v3ph_2c2;
+    (* srl_style = "register" *) reg signed [RCLOBITS+RC_RECIPW:0]     v1pl_2c2, v3pl_2c2;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]            v0_2c2, v2_2c2;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]             mu_2c2;
+    (* srl_style = "register" *) reg                                   valid_2c2;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            v1ph_2c2 <= {(RCHI_WIDTH+RC_RECIPW){1'b0}};
+            v3ph_2c2 <= {(RCHI_WIDTH+RC_RECIPW){1'b0}};
+            v1pl_2c2 <= {(RCLOBITS+RC_RECIPW+1){1'b0}};
+            v3pl_2c2 <= {(RCLOBITS+RC_RECIPW+1){1'b0}};
+            v0_2c2 <= {NUM_WIDTH{1'b0}};
+            v2_2c2 <= {NUM_WIDTH{1'b0}};
+            mu_2c2    <= {MU_WIDTH{1'b0}};
+            valid_2c2 <= 1'b0;
+        end else begin
+            valid_2c2 <= valid_2c1;
+            mu_2c2    <= mu_2c1;
+            v1ph_2c2 <= v1hi_2c1 * RECIP6;
+            v3ph_2c2 <= v3hi_2c1 * RECIP6;
+            v1pl_2c2 <= $signed({1'b0, v1lo_2c1}) * RECIP6;
+            v3pl_2c2 <= $signed({1'b0, v3lo_2c1}) * RECIP6;
+            v0_2c2 <= v0_2c1;
+            v2_2c2 <= v2_2c1;
+        end
+    end
+
+    // ---- Stage 2c: recombine (shift+add, safe) into the same
+    // "recip_v1_2c"/"recip_v3_2c" this module always had. ----
     reg signed [RECIPW-1:0]   recip_v1_2c, recip_v3_2c;
     reg signed [NUM_WIDTH-1:0] v0_2c, v2_2c;
     (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2c;
@@ -250,12 +325,12 @@ module gmsk_step2a_interpolator #
             mu_2c    <= {MU_WIDTH{1'b0}};
             valid_2c <= 1'b0;
         end else begin
-            valid_2c <= valid_2b;
-            mu_2c    <= mu_2b;
-            recip_v1_2c <= num_v1_2b * RECIP6;
-            recip_v3_2c <= num_v3_2b * RECIP6;
-            v0_2c <= v0_2b;
-            v2_2c <= num_v2_2b >>> 1;   // /2, exact, trivially fast
+            valid_2c <= valid_2c2;
+            mu_2c    <= mu_2c2;
+            recip_v1_2c <= (v1ph_2c2 <<< RCLOBITS) + v1pl_2c2;
+            recip_v3_2c <= (v3ph_2c2 <<< RCLOBITS) + v3pl_2c2;
+            v0_2c <= v0_2c2;
+            v2_2c <= v2_2c2;
         end
     end
 
