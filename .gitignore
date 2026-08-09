@@ -20,7 +20,7 @@ hdl/*/_ip_pkg_proj/
 hdl/*/dfx_runtime.txt
 hdl/*/tcl_log*.txt
 hdl/*/vivado.jou
-hdl/**/iladata*.csv
+hdl/**/*iladata*.csv
 hdl/**/*.ila
 
 # BOOT.BIN build workspace: keep the recipe (bif, tcl, py scripts), not the
