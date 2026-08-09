@@ -200,8 +200,68 @@ module gmsk_step2a_interpolator #
         end
     end
 
-    // ---- Stage 2c: apply the constant division, isolated in its own
-    // cycle same as every other constant-divisor op in this module. ----
+    // ---- Stage 2c/2d: apply the constant division.
+    //
+    // Real-hardware bug found and fixed (2026-08-09), a fourth instance of
+    // the exact same underlying lesson: even with Stage 2 already split
+    // into scale/sum/divide sub-stages, WNS was still -14.469ns, and the
+    // failing path was num_v1_2b_reg -> v1_2_reg -- Stage 2c's /6 division,
+    // ALONE in its own cycle with nothing else sharing it, was itself
+    // still too slow (18.5ns, 36 logic levels, 25 CARRY4s). The prior
+    // comment's assumption ("constant-divisor division ... NOT the same
+    // cost/timing class as a runtime variable divide") is true relative to
+    // a real divider, but Verilog's `/` by a non-power-of-2 constant still
+    // synthesizes to essentially a multiply-by-reciprocal-constant + shift
+    // internally -- structurally the same shape as the Horner multiplies,
+    // which needed their OWN registered output stage (see the DSP48-fix
+    // entry in project memory) rather than being combined with a
+    // shift+add in the same cycle. This division was never given that
+    // same treatment. /2 (v2) is exempt -- a power-of-2 divisor is just a
+    // plain arithmetic right-shift, zero logic, not a real division in
+    // hardware at all.
+    //
+    // Fix: hand-expand the /6 reciprocal-multiply for v1 and v3 into its
+    // own registered stage (2c), separate from the final shift (2d) --
+    // same "register the raw multiply, shift+finalize next cycle" pattern
+    // as every multiply in this module. RECIP6=174763, SHIFT6=20 is a
+    // 20-bit fixed-point approximation of 1/6 (174763/2^20 = 0.1666670...
+    // vs exact 0.1666667, relative error ~2e-6 -- utterly negligible next
+    // to the cubic-vs-sine approximation error the SIM gate already
+    // tolerates).
+    // -----------------------------------------------------------------
+    localparam integer RECIP6 = 174763;   // round(2^20 / 6)
+    localparam integer SHIFT6 = 20;
+    localparam integer RECIPW = NUM_WIDTH + SHIFT6 + 1;  // natural width of num*RECIP6
+
+    // ---- Stage 2c: register the raw reciprocal-multiplies for v1/v3;
+    // v2's /2 is a plain shift, computed directly (no multiply, safe to
+    // finish here); v0/mu/valid forwarded.
+    reg signed [RECIPW-1:0]   recip_v1_2c, recip_v3_2c;
+    reg signed [NUM_WIDTH-1:0] v0_2c, v2_2c;
+    (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2c;
+    (* srl_style = "register" *) reg                valid_2c;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            recip_v1_2c <= {RECIPW{1'b0}};
+            recip_v3_2c <= {RECIPW{1'b0}};
+            v0_2c <= {NUM_WIDTH{1'b0}};
+            v2_2c <= {NUM_WIDTH{1'b0}};
+            mu_2c    <= {MU_WIDTH{1'b0}};
+            valid_2c <= 1'b0;
+        end else begin
+            valid_2c <= valid_2b;
+            mu_2c    <= mu_2b;
+            recip_v1_2c <= num_v1_2b * RECIP6;
+            recip_v3_2c <= num_v3_2b * RECIP6;
+            v0_2c <= v0_2b;
+            v2_2c <= num_v2_2b >>> 1;   // /2, exact, trivially fast
+        end
+    end
+
+    // ---- Stage 2d: finish the /6 division (shift down the registered
+    // reciprocal-multiply -- itself just a shift, no further multiply, so
+    // safe to finalize here), forward v0/v2/mu/valid.
     reg signed [NUM_WIDTH-1:0] v0_2, v1_2, v2_2, v3_2;
     (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_d2;
     (* srl_style = "register" *) reg                valid_d2;
@@ -215,12 +275,12 @@ module gmsk_step2a_interpolator #
             mu_d2    <= {MU_WIDTH{1'b0}};
             valid_d2 <= 1'b0;
         end else begin
-            valid_d2 <= valid_2b;
-            mu_d2    <= mu_2b;
-            v0_2 <= v0_2b;
-            v1_2 <= num_v1_2b / 6;
-            v2_2 <= num_v2_2b / 2;
-            v3_2 <= num_v3_2b / 6;
+            valid_d2 <= valid_2c;
+            mu_d2    <= mu_2c;
+            v0_2 <= v0_2c;
+            v1_2 <= recip_v1_2c >>> SHIFT6;
+            v2_2 <= v2_2c;
+            v3_2 <= recip_v3_2c >>> SHIFT6;
         end
     end
 
