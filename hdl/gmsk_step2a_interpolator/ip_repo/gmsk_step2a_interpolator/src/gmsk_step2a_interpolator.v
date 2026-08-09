@@ -324,26 +324,112 @@ module gmsk_step2a_interpolator #
     localparam integer PROD3_WIDTH = NUM_WIDTH + MULW;     // v3_2 (NUM_WIDTH) * mu
     localparam integer PROD_WIDTH  = ACC_WIDTH + MULW;     // acc_3/acc_4     (ACC_WIDTH) * mu
 
-    // ---- Stage 3a: register the raw multiply v3*mu, naturally sized ----
+    // Real-hardware bug found and fixed (2026-08-09), a FIFTH instance of
+    // the multiply-timing lesson, but a genuinely different mechanism this
+    // time: with every earlier fix applied, WNS was down to -1.665ns and
+    // the failing path (mult_50/CLK -> mult_5_reg/PCIN) was DSP48-to-DSP48
+    // -- both endpoints real DSP48E1 primitives, "Logic Levels: 0", 99.95%
+    // of the delay inside the DSP fabric itself. Every earlier fix worked
+    // (multiplies genuinely map to DSP48s now); this is DSP48E1's own
+    // native operand limit (25x18 signed) being exceeded -- v3_2 is
+    // NUM_WIDTH=28 bits, acc_3/acc_4 are ACC_WIDTH=30 bits, both wider
+    // than the 25-bit "A" input a single DSP48E1 can take, forcing a
+    // 2-DSP cascade via the dedicated PCIN/PCOUT path. That cascade route
+    // is only fast when the two DSP48 tiles land immediately adjacent in
+    // placement; here it didn't, and a different implementation strategy
+    // (Performance_ExplorePostRoutePhysOpt) made no real difference
+    // (-1.668 to -1.821ns range) -- Vivado's own physopt log said as much:
+    // "Post-Route Physical Optimization is most effective when WNS is
+    // above -0.5ns". Shrinking ACC_WIDTH to fit under 25 bits was
+    // considered and rejected -- the Horner accumulator's true worst-case
+    // magnitude needs ~27 bits for correctness margin, already past the
+    // single-DSP48 threshold, so trimming width further risks silent
+    // overflow rather than fixing anything.
     //
-    // srl_style="register" on every pure "carry this value forward N cycles
-    // unchanged" signal below (v0/v1/v2/mu/valid across stages 3a-5a): a
-    // second real-hardware bug found and fixed (2026-08-02), one rebuild
-    // after the multiply-width fix above. WNS was still catastrophically
-    // negative (-20ns class) post-fix, but the failing path moved --
-    // x_1_reg[4] -> v1_3a_reg[25]_srl2..._srlopt, 38 logic levels, 27
-    // CARRY4s. The "_srlopt" name is the tell: Vivado's synthesizer
-    // recognized "v1_3a <= v1_2, then v1_3b <= v1_3a, then v1_4a <= v1_3b"
-    // as a textbook shift-register pattern and opportunistically converted
-    // it from plain flip-flops into an SRL16/32 primitive (a space-saving
-    // optimization), which then placed/routed badly against the nearby
-    // CARRY4-heavy multiply logic. Forcing srl_style="register" tells
-    // synthesis "no, keep these as real flip-flops" -- the standard,
-    // documented fix for exactly this class of Vivado-introduced timing
-    // surprise in a pipeline that was designed assuming FF-based stages.
+    // Fix: split each wide operand (v3_2, acc_3, acc_4) into hi/lo halves
+    // at bit 15, each half safely under DSP48's 25-bit limit on its own,
+    // compute both partial products in dedicated single-DSP multiplies,
+    // then recombine (shift+add, not a multiply -- safe to combine with
+    // other logic, unlike every multiply in this module). This is the
+    // standard technique for a multiply wider than one DSP48 tile, done
+    // explicitly in RTL instead of trusting Vivado's automatic cascade
+    // inference to place it well.
+    localparam integer LOBITS     = 15;                 // split point: low LOBITS bits (unsigned), rest (signed) is "hi"
+    localparam integer LO_SWIDTH  = LOBITS + 1;          // lo part zero-extended into a signed container
+    localparam integer V3HI_WIDTH  = NUM_WIDTH - LOBITS;  // 13 -- comfortably under the 25-bit DSP48 "A" limit
+    localparam integer ACCHI_WIDTH = ACC_WIDTH - LOBITS;  // 15 -- likewise
+
+    // srl_style="register" on every pure "carry this value forward N
+    // cycles unchanged" signal below: a second real-hardware bug found and
+    // fixed (2026-08-02) -- Vivado's synthesizer opportunistically
+    // converts such forwarding chains into SRL16/32 primitives (a
+    // space-saving optimization) that then placed/routed badly against
+    // nearby CARRY4-heavy multiply logic. Forcing plain-flip-flop
+    // registers is the standard, documented fix.
+
+    // ---- Stage 3a1: split v3_2 into hi (signed)/lo (unsigned magnitude) ----
+    (* srl_style = "register" *) reg signed [V3HI_WIDTH-1:0] v3hi_3a1;
+    (* srl_style = "register" *) reg        [LOBITS-1:0]     v3lo_3a1;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]   v2_3a1, v1_3a1, v0_3a1;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]    mu_3a1;
+    (* srl_style = "register" *) reg                          valid_3a1;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            v3hi_3a1 <= {V3HI_WIDTH{1'b0}};
+            v3lo_3a1 <= {LOBITS{1'b0}};
+            v2_3a1 <= {NUM_WIDTH{1'b0}};
+            v1_3a1 <= {NUM_WIDTH{1'b0}};
+            v0_3a1 <= {NUM_WIDTH{1'b0}};
+            mu_3a1    <= {MU_WIDTH{1'b0}};
+            valid_3a1 <= 1'b0;
+        end else begin
+            valid_3a1 <= valid_d2;
+            mu_3a1    <= mu_d2;
+            v3hi_3a1 <= v3_2 >>> LOBITS;
+            v3lo_3a1 <= v3_2[LOBITS-1:0];
+            v2_3a1 <= v2_2;
+            v1_3a1 <= v1_2;
+            v0_3a1 <= v0_2;
+        end
+    end
+
+    // ---- Stage 3a2: the two single-DSP48-safe partial-product multiplies ----
+    // mu is forwarded (unused by this stage's own logic) so stage 4a1 gets
+    // the SAME window's mu, not a later, re-shifted one -- see the
+    // mu-forwarding note above stage 3a1.
+    (* srl_style = "register" *) reg signed [V3HI_WIDTH+MULW-1:0]   ph_3a2;
+    (* srl_style = "register" *) reg signed [LO_SWIDTH+MULW-1:0]    pl_3a2;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]         v2_3a2, v1_3a2, v0_3a2;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]          mu_3a2;
+    (* srl_style = "register" *) reg                                valid_3a2;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            ph_3a2 <= {(V3HI_WIDTH+MULW){1'b0}};
+            pl_3a2 <= {(LO_SWIDTH+MULW){1'b0}};
+            v2_3a2 <= {NUM_WIDTH{1'b0}};
+            v1_3a2 <= {NUM_WIDTH{1'b0}};
+            v0_3a2 <= {NUM_WIDTH{1'b0}};
+            mu_3a2    <= {MU_WIDTH{1'b0}};
+            valid_3a2 <= 1'b0;
+        end else begin
+            valid_3a2 <= valid_3a1;
+            mu_3a2    <= mu_3a1;
+            ph_3a2 <= v3hi_3a1 * $signed({1'b0, mu_3a1});
+            pl_3a2 <= $signed({1'b0, v3lo_3a1}) * $signed({1'b0, mu_3a1});
+            v2_3a2 <= v2_3a1;
+            v1_3a2 <= v1_3a1;
+            v0_3a2 <= v0_3a1;
+        end
+    end
+
+    // ---- Stage 3a3: recombine (shift+add, not a multiply -- safe to
+    // combine) into the same "mult_3" this module always had. mu still
+    // just forwarded -- not needed again until stage 4a2. ----
     (* srl_style = "register" *) reg signed [PROD3_WIDTH-1:0] mult_3;
     (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]   v2_3a, v1_3a, v0_3a;
-    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]    mu_3a;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]    mu_3a3;
     (* srl_style = "register" *) reg                          valid_3a;
 
     always @(posedge aclk) begin
@@ -352,19 +438,19 @@ module gmsk_step2a_interpolator #
             v2_3a  <= {NUM_WIDTH{1'b0}};
             v1_3a  <= {NUM_WIDTH{1'b0}};
             v0_3a  <= {NUM_WIDTH{1'b0}};
-            mu_3a  <= {MU_WIDTH{1'b0}};
+            mu_3a3 <= {MU_WIDTH{1'b0}};
             valid_3a <= 1'b0;
         end else begin
-            valid_3a <= valid_d2;
-            mult_3   <= v3_2 * $signed({1'b0, mu_d2});
-            v2_3a    <= v2_2;
-            v1_3a    <= v1_2;
-            v0_3a    <= v0_2;
-            mu_3a    <= mu_d2;
+            valid_3a <= valid_3a2;
+            mu_3a3   <= mu_3a2;
+            mult_3   <= (ph_3a2 <<< LOBITS) + pl_3a2;
+            v2_3a    <= v2_3a2;
+            v1_3a    <= v1_3a2;
+            v0_3a    <= v0_3a2;
         end
     end
 
-    // ---- Stage 3b: acc_3 = (mult_3 >>> MU_WIDTH) + v2 ----
+    // ---- Stage 3b: acc_3 = (mult_3 >>> MU_WIDTH) + v2. mu still forwarded. ----
     reg signed [ACC_WIDTH-1:0] acc_3;
     (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v1_3b, v0_3b;
     (* srl_style = "register" *) reg        [MU_WIDTH-1:0]  mu_3b;
@@ -379,36 +465,84 @@ module gmsk_step2a_interpolator #
             valid_3b <= 1'b0;
         end else begin
             valid_3b <= valid_3a;
+            mu_3b <= mu_3a3;
             acc_3 <= (mult_3 >>> MU_WIDTH) + v2_3a;
             v1_3b <= v1_3a;
             v0_3b <= v0_3a;
-            mu_3b <= mu_3a;
         end
     end
 
-    // ---- Stage 4a: register the raw multiply acc_3*mu, naturally sized ----
-    reg signed [PROD_WIDTH-1:0] mult_4;
-    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v1_4a, v0_4a;
-    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]  mu_4a;
-    (* srl_style = "register" *) reg                        valid_4a;
+    // ---- Stage 4a1/4a2/4a3: same hi/lo split treatment for acc_3*mu ----
+    (* srl_style = "register" *) reg signed [ACCHI_WIDTH-1:0] acc3hi_4a1;
+    (* srl_style = "register" *) reg        [LOBITS-1:0]      acc3lo_4a1;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]   v1_4a1, v0_4a1;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]    mu_4a1;
+    (* srl_style = "register" *) reg                          valid_4a1;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            acc3hi_4a1 <= {ACCHI_WIDTH{1'b0}};
+            acc3lo_4a1 <= {LOBITS{1'b0}};
+            v1_4a1 <= {NUM_WIDTH{1'b0}};
+            v0_4a1 <= {NUM_WIDTH{1'b0}};
+            mu_4a1    <= {MU_WIDTH{1'b0}};
+            valid_4a1 <= 1'b0;
+        end else begin
+            valid_4a1 <= valid_3b;
+            mu_4a1    <= mu_3b;
+            acc3hi_4a1 <= acc_3 >>> LOBITS;
+            acc3lo_4a1 <= acc_3[LOBITS-1:0];
+            v1_4a1 <= v1_3b;
+            v0_4a1 <= v0_3b;
+        end
+    end
+
+    (* srl_style = "register" *) reg signed [ACCHI_WIDTH+MULW-1:0] ph_4a2;
+    (* srl_style = "register" *) reg signed [LO_SWIDTH+MULW-1:0]   pl_4a2;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]        v1_4a2, v0_4a2;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]         mu_4a2;
+    (* srl_style = "register" *) reg                               valid_4a2;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            ph_4a2 <= {(ACCHI_WIDTH+MULW){1'b0}};
+            pl_4a2 <= {(LO_SWIDTH+MULW){1'b0}};
+            v1_4a2 <= {NUM_WIDTH{1'b0}};
+            v0_4a2 <= {NUM_WIDTH{1'b0}};
+            mu_4a2    <= {MU_WIDTH{1'b0}};
+            valid_4a2 <= 1'b0;
+        end else begin
+            valid_4a2 <= valid_4a1;
+            mu_4a2    <= mu_4a1;
+            ph_4a2 <= acc3hi_4a1 * $signed({1'b0, mu_4a1});
+            pl_4a2 <= $signed({1'b0, acc3lo_4a1}) * $signed({1'b0, mu_4a1});
+            v1_4a2 <= v1_4a1;
+            v0_4a2 <= v0_4a1;
+        end
+    end
+
+    (* srl_style = "register" *) reg signed [PROD_WIDTH-1:0] mult_4;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]  v1_4a, v0_4a;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]   mu_4a3;
+    (* srl_style = "register" *) reg                         valid_4a;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
             mult_4 <= {PROD_WIDTH{1'b0}};
             v1_4a  <= {NUM_WIDTH{1'b0}};
             v0_4a  <= {NUM_WIDTH{1'b0}};
-            mu_4a  <= {MU_WIDTH{1'b0}};
+            mu_4a3 <= {MU_WIDTH{1'b0}};
             valid_4a <= 1'b0;
         end else begin
-            valid_4a <= valid_3b;
-            mult_4   <= acc_3 * $signed({1'b0, mu_3b});
-            v1_4a    <= v1_3b;
-            v0_4a    <= v0_3b;
-            mu_4a    <= mu_3b;
+            valid_4a <= valid_4a2;
+            mu_4a3   <= mu_4a2;
+            mult_4   <= (ph_4a2 <<< LOBITS) + pl_4a2;
+            v1_4a    <= v1_4a2;
+            v0_4a    <= v0_4a2;
         end
     end
 
-    // ---- Stage 4b: acc_4 = (mult_4 >>> MU_WIDTH) + v1 ----
+    // ---- Stage 4b: acc_4 = (mult_4 >>> MU_WIDTH) + v1. mu still forwarded. ----
     reg signed [ACC_WIDTH-1:0] acc_4;
     (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v0_4b;
     (* srl_style = "register" *) reg        [MU_WIDTH-1:0]  mu_4b;
@@ -422,16 +556,58 @@ module gmsk_step2a_interpolator #
             valid_4b <= 1'b0;
         end else begin
             valid_4b <= valid_4a;
+            mu_4b <= mu_4a3;
             acc_4 <= (mult_4 >>> MU_WIDTH) + v1_4a;
             v0_4b <= v0_4a;
-            mu_4b <= mu_4a;
         end
     end
 
-    // ---- Stage 5a: register the raw multiply acc_4*mu, naturally sized ----
-    reg signed [PROD_WIDTH-1:0] mult_5;
-    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0] v0_5a;
-    (* srl_style = "register" *) reg                        valid_5a;
+    // ---- Stage 5a1/5a2/5a3: same hi/lo split treatment for acc_4*mu.
+    // mu not needed past 5a2's consumption -- nothing forwards it further. ----
+    (* srl_style = "register" *) reg signed [ACCHI_WIDTH-1:0] acc4hi_5a1;
+    (* srl_style = "register" *) reg        [LOBITS-1:0]      acc4lo_5a1;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]   v0_5a1;
+    (* srl_style = "register" *) reg        [MU_WIDTH-1:0]    mu_5a1;
+    (* srl_style = "register" *) reg                          valid_5a1;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            acc4hi_5a1 <= {ACCHI_WIDTH{1'b0}};
+            acc4lo_5a1 <= {LOBITS{1'b0}};
+            v0_5a1 <= {NUM_WIDTH{1'b0}};
+            mu_5a1    <= {MU_WIDTH{1'b0}};
+            valid_5a1 <= 1'b0;
+        end else begin
+            valid_5a1 <= valid_4b;
+            mu_5a1    <= mu_4b;
+            acc4hi_5a1 <= acc_4 >>> LOBITS;
+            acc4lo_5a1 <= acc_4[LOBITS-1:0];
+            v0_5a1 <= v0_4b;
+        end
+    end
+
+    (* srl_style = "register" *) reg signed [ACCHI_WIDTH+MULW-1:0] ph_5a2;
+    (* srl_style = "register" *) reg signed [LO_SWIDTH+MULW-1:0]   pl_5a2;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]        v0_5a2;
+    (* srl_style = "register" *) reg                               valid_5a2;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            ph_5a2 <= {(ACCHI_WIDTH+MULW){1'b0}};
+            pl_5a2 <= {(LO_SWIDTH+MULW){1'b0}};
+            v0_5a2 <= {NUM_WIDTH{1'b0}};
+            valid_5a2 <= 1'b0;
+        end else begin
+            valid_5a2 <= valid_5a1;
+            ph_5a2 <= acc4hi_5a1 * $signed({1'b0, mu_5a1});
+            pl_5a2 <= $signed({1'b0, acc4lo_5a1}) * $signed({1'b0, mu_5a1});
+            v0_5a2 <= v0_5a1;
+        end
+    end
+
+    (* srl_style = "register" *) reg signed [PROD_WIDTH-1:0] mult_5;
+    (* srl_style = "register" *) reg signed [NUM_WIDTH-1:0]  v0_5a;
+    (* srl_style = "register" *) reg                         valid_5a;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -439,9 +615,9 @@ module gmsk_step2a_interpolator #
             v0_5a  <= {NUM_WIDTH{1'b0}};
             valid_5a <= 1'b0;
         end else begin
-            valid_5a <= valid_4b;
-            mult_5   <= acc_4 * $signed({1'b0, mu_4b});
-            v0_5a    <= v0_4b;
+            valid_5a <= valid_5a2;
+            mult_5   <= (ph_5a2 <<< LOBITS) + pl_5a2;
+            v0_5a    <= v0_5a2;
         end
     end
 
