@@ -1,0 +1,542 @@
+<title>Step 2d — The Gardner Timing-Error Detector</title>
+<style>
+  :root {
+    --paper: #F2F3EE;
+    --ink: #1B211F;
+    --muted: #6B7269;
+    --border: #CBD0C4;
+    --card-bg: #FDFDFB;
+    --copper: #A85A26;
+    --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC;
+    --teal: #2E8F87;
+    --teal-soft: #CFE7E4;
+    --teal-line: #2E8F87;
+    --violet: #6E59A8;
+    --violet-soft: #E4DEF2;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131715;
+      --ink: #E7EBE5;
+      --muted: #8D9690;
+      --border: #2B322E;
+      --card-bg: #1A201D;
+      --copper: #DE9257;
+      --copper-strong: #F0AE7A;
+      --copper-soft: #3A2A1C;
+      --teal: #56C6BB;
+      --teal-soft: #16302C;
+      --teal-line: #56C6BB;
+      --violet: #A796D6;
+      --violet-soft: #2A2440;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131715; --ink: #E7EBE5; --muted: #8D9690; --border: #2B322E;
+    --card-bg: #1A201D; --copper: #DE9257; --copper-strong: #F0AE7A;
+    --copper-soft: #3A2A1C; --teal: #56C6BB; --teal-soft: #16302C; --teal-line: #56C6BB;
+    --violet: #A796D6; --violet-soft: #2A2440;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F2F3EE; --ink: #1B211F; --muted: #6B7269; --border: #CBD0C4;
+    --card-bg: #FDFDFB; --copper: #A85A26; --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC; --teal: #2E8F87; --teal-soft: #CFE7E4; --teal-line: #2E8F87;
+    --violet: #6E59A8; --violet-soft: #E4DEF2;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 56px 28px 100px; }
+
+  .eyebrow {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-weight: 700; font-size: clamp(26px, 4.2vw, 36px);
+    letter-spacing: -0.01em; text-wrap: balance; margin: 0 0 10px;
+  }
+  .subtitle { font-size: 17px; color: var(--muted); max-width: 58ch; margin: 0 0 40px; }
+
+  h2 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--copper-strong); font-weight: 700;
+    margin: 48px 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  section:first-of-type h2 { margin-top: 0; }
+  h3 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 15px; color: var(--ink); margin: 26px 0 10px;
+  }
+  p { max-width: 64ch; font-size: 16.5px; margin: 0 0 16px; }
+  .max-none { max-width: none; }
+  strong { color: var(--copper-strong); font-weight: 700; }
+  em { color: var(--ink); }
+  code {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 0.88em; background: var(--teal-soft); color: var(--teal);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  a { color: var(--teal); }
+
+  .callout {
+    background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--teal);
+    border-radius: 8px; padding: 16px 20px; margin: 0 0 20px; box-shadow: var(--shadow);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .k {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 6px;
+  }
+  .callout.copper { border-left-color: var(--copper); }
+  .callout.copper .k { color: var(--copper-strong); }
+
+  /* equation blocks */
+  .eq {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; margin: 0 0 20px; font-size: 15px; overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .eq .line { margin: 4px 0; white-space: pre; }
+  .eq .comment { color: var(--muted); font-style: italic; }
+
+  /* block diagram (matches step1_discriminator.html / step2a / step2b) */
+  .diagram {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    margin: 8px 0 8px; padding: 26px 20px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+  .dblock {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 12.5px; text-align: center; padding: 12px 14px; border-radius: 8px;
+    border: 1.5px solid var(--border); background: var(--paper); color: var(--ink);
+    flex: none; line-height: 1.35; min-width: 92px;
+  }
+  .dblock.accent { border-color: var(--teal); color: var(--teal); }
+  .dblock.out { border-color: var(--copper); color: var(--copper-strong); }
+  .dblock.dim { border-color: var(--violet); color: var(--violet); border-style: dashed; }
+  .darrow { flex: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+  .dgroup { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+  .dgroup .caption { font-size: 10px; color: var(--muted); font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; letter-spacing: 0.04em; }
+  .dcol { display: flex; flex-direction: column; gap: 8px; flex: none; }
+
+  /* loop diagram (feedback ring) */
+  .loopdiagram {
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+    gap: 0; margin: 8px 0 8px; padding: 30px 20px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+
+  figure { margin: 0 0 8px; }
+  figcaption {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; margin-top: 10px;
+  }
+
+  ul.notes { padding-left: 20px; margin: 0 0 20px; }
+  ul.notes li { font-size: 15.5px; margin-bottom: 10px; max-width: 60ch; }
+  ul.notes li::marker { color: var(--copper); }
+
+  /* worked-example table */
+  .tbl-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 420px; }
+  thead th {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    text-align: left; color: var(--muted); background: var(--card-bg);
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: top; background: var(--card-bg); font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13.5px; }
+  tbody td:first-child { font-family: Georgia, serif; font-size: 14.5px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.final td { font-weight: 700; color: var(--copper-strong); }
+
+  /* interactive demo */
+  .demo {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px 22px 18px; margin: 8px 0 8px; box-shadow: var(--shadow);
+  }
+  .demo canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: var(--paper); border: 1px solid var(--border); }
+  .demo-controls { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
+  .demo-controls label { font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; font-size: 12.5px; color: var(--muted); letter-spacing: 0.04em; }
+  .demo-controls input[type=range] { flex: 1; min-width: 160px; accent-color: var(--teal); }
+  .demo-readout {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 13px; color: var(--teal); min-width: 62px; text-align: right;
+  }
+  .demo-coeffs {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 10px;
+    margin-top: 14px; font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13px;
+  }
+  .demo-coeffs div { background: var(--paper); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .demo-coeffs .lbl { color: var(--muted); font-size: 11px; display:block; margin-bottom: 2px; }
+  .demo-y { color: var(--copper-strong); font-weight: 700; }
+  .demo-verdict { font-family: "Bahnschrift","Roboto Condensed",sans-serif; font-weight: 700; font-size: 13px; margin-top: 12px; text-align: center; }
+  .demo-sep { border: none; border-top: 1px dashed var(--border); margin: 18px 0; }
+
+  footer { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 480px) {
+    .wrap { padding: 36px 18px 72px; }
+    .diagram, .loopdiagram { padding: 18px 14px; }
+    .demo { padding: 16px 14px; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Step 2d &middot; Technical Note</p>
+  <h1>The Gardner Timing-Error Detector</h1>
+  <p class="subtitle">The interpolator can answer &ldquo;what's the value at any &mu;.&rdquo; The NCO decides &ldquo;when, and which &mu; to ask for.&rdquo; Neither one can tell you whether that choice is actually <em>right</em>. This is the piece that measures that.</p>
+
+  <section>
+    <h2>What problem is this solving?</h2>
+    <p>Picture the loop as it stands after sub-steps A and B: the NCO free-runs at a fixed nominal rate, telling the interpolator exactly when to evaluate and at what &mu;. If the transmitter's clock and the receiver's clock happened to match exactly forever, that would be the whole story. They don't &mdash; two independent oscillators always drift apart by some small amount, and even the STARTING offset between them is unknown. Left alone, the NCO's fixed guess drifts further from correct with every symbol.</p>
+    <p>What's missing is a way to look at the actual samples coming in and answer: <strong>&ldquo;is the sampling instant we just used too early, too late, or about right?&rdquo;</strong> That answer, as a single signed number, is exactly what the Gardner algorithm computes. A later piece (the loop filter, not yet built) will smooth that number and feed it back into the NCO's <code>adj_in</code> &mdash; closing the loop so the receiver keeps tracking the transmitter's true symbol rate indefinitely, not just at the one instant it happened to start correct.</p>
+  </section>
+
+  <section>
+    <h2>Three samples, one number</h2>
+    <p>Gardner's insight (Gardner, 1986) needs exactly three interpolated samples per symbol period, not one:</p>
+    <ul class="notes">
+      <li><strong>y<sub>on</sub>[n&minus;1]</strong> &mdash; the on-time sample from the <em>previous</em> symbol.</li>
+      <li><strong>y<sub>mid</sub>[n]</strong> &mdash; one extra sample taken exactly <em>halfway</em> between the previous symbol and this one &mdash; right where the signal is doing the most changing, if it's changing at all.</li>
+      <li><strong>y<sub>on</sub>[n]</strong> &mdash; the on-time sample for the <em>current</em> symbol.</li>
+    </ul>
+    <div class="eq">
+      <div class="line">e[n] = ( y_on[n] &minus; y_on[n&minus;1] ) &times; y_mid[n]</div>
+    </div>
+    <p>Why this particular combination works: <code>y_on[n] &minus; y_on[n&minus;1]</code> is "how much the signal moved between the last two symbol decisions" &mdash; its sign says which way the signal is trending. <code>y_mid[n]</code> is a reading taken exactly at the symmetric midpoint between them. <strong>If the sampling grid is perfectly centered on the true symbol instants</strong>, that midpoint sits on an axis of symmetry &mdash; it doesn't systematically lean toward the earlier or the later symbol, so on average it doesn't correlate with which way the signal is trending, and the product averages to <strong>zero</strong>. <strong>If the whole sampling grid is shifted early or late</strong>, the midpoint reading gets consistently biased toward whichever neighbor it's now closer to &mdash; and that bias multiplies against the trend direction to produce a signed number that does <em>not</em> average to zero, with a sign that says which way to correct. The interactive demo below makes this concrete rather than just asserted.</p>
+  </section>
+
+  <section>
+    <h2>Where this sits in the system</h2>
+    <figure>
+      <div class="loopdiagram">
+        <div class="dgroup">
+          <div class="dblock accent">gmsk_step2a<br>interpolator</div>
+          <span class="caption">Step 2a &middot; done</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock out">gmsk_step2d<br>Gardner TED<br><em>(this page)</em></div>
+          <span class="caption">Step 2d &middot; done</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock dim">loop filter</div>
+          <span class="caption">Step 2e &middot; not yet built</span>
+        </div>
+        <div class="darrow">&rarr;</div>
+        <div class="dgroup">
+          <div class="dblock accent">gmsk_step2b<br>NCO</div>
+          <span class="caption">Step 2b &middot; done</span>
+        </div>
+      </div>
+      <figcaption>The NCO's <code>mu_out</code> already feeds the interpolator's <code>mu_in</code> (dashed loop, not drawn, closes back to the left) &mdash; this page's module is the piece that will feed the NCO's <code>adj_in</code>, once the loop filter between them exists. This standalone sub-step tests the TED in isolation, fed synthetic on-time/mid-point samples directly, the same way every earlier sub-step in this project validated its own piece before wiring anything together.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Try it: drag the timing offset</h2>
+    <div class="demo">
+      <canvas id="waveCanvas" width="720" height="260"></canvas>
+      <div class="demo-controls">
+        <label for="epsSlider">timing offset &epsilon;</label>
+        <input type="range" id="epsSlider" min="-50" max="50" step="1" value="0">
+        <span class="demo-readout" id="epsReadout">0.00T</span>
+      </div>
+      <div class="demo-coeffs">
+        <div><span class="lbl">y_on[n&minus;1]</span><span id="dYPrev">&mdash;</span></div>
+        <div><span class="lbl">y_mid[n]</span><span id="dYMid">&mdash;</span></div>
+        <div><span class="lbl">y_on[n]</span><span id="dYOn">&mdash;</span></div>
+        <div><span class="lbl">diff = y_on[n]&minus;y_on[n&minus;1]</span><span id="dDiff">&mdash;</span></div>
+        <div><span class="lbl">e[n] = diff &times; y_mid[n]</span><span id="dErr" class="demo-y">&mdash;</span></div>
+      </div>
+      <div class="demo-verdict" id="dVerdict"></div>
+      <hr class="demo-sep">
+      <canvas id="sCurveCanvas" width="720" height="180"></canvas>
+      <p style="margin: 10px 0 0; font-size: 13.5px; color: var(--muted); max-width: none;">The bottom plot is the &ldquo;S-curve&rdquo; every timing/phase-detector textbook draws: Gardner's error, averaged over many symbols, as a function of &epsilon; itself. The marker tracks your slider. This is the actual signal a loop filter drives toward the zero-crossing at &epsilon;=0 &mdash; the whole reason a closed loop can lock onto and <em>track</em> the right timing, not just guess it once.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Worked example, by hand</h2>
+    <p>Real module defaults: <code>IN_WIDTH=24</code>, hi/lo split at <code>LOBITS=15</code> (same split point <code>gmsk_step2a_interpolator</code> uses throughout). Using representative sample values <code>y_on[n&minus;1]=&minus;120000</code>, <code>y_mid[n]=45000</code>, <code>y_on[n]=90000</code>:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Computation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>diff</td><td>y_on[n] &minus; y_on[n&minus;1] = 90000 &minus; (&minus;120000)</td><td>210000</td></tr>
+          <tr><td>mid_hi</td><td>y_mid[n] &gt;&gt;&gt; 15 (arithmetic)</td><td>1</td></tr>
+          <tr><td>mid_lo</td><td>y_mid[n][14:0] (low 15 bits, unsigned)</td><td>12232</td></tr>
+          <tr><td>ph</td><td>diff &times; mid_hi = 210000 &times; 1</td><td>210000</td></tr>
+          <tr><td>pl</td><td>diff &times; mid_lo = 210000 &times; 12232</td><td>2,568,720,000</td></tr>
+          <tr><td>prod</td><td>(ph &lt;&lt;&lt; 15) + pl = (210000&times;32768) + pl</td><td>9,450,000,000</td></tr>
+          <tr><td>e[n]</td><td>prod &gt;&gt;&gt; 17 (TRUNC_SHIFT, PRODW=49 &rarr; OUT_WIDTH=32)</td><td class="final">72097</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Sanity check: <code>210000 &times; 45000 / 2<sup>17</sup> = 72097.78</code> &mdash; the hi/lo-split fixed-point result (72097) matches the floor of the exact floating-point value precisely, not just approximately. That's expected and worth being clear about: unlike the interpolator's <code>RECIP6</code> constant (a genuine approximation of 1/6), splitting an operand into hi/lo halves before multiplying is an <em>exact</em> decomposition &mdash; <code>y_mid = (mid_hi&lt;&lt;15) + mid_lo</code> holds bit-for-bit. The only place any precision is actually discarded is the final, intentional <code>&gt;&gt;&gt;17</code> truncation.</p>
+
+    <div class="callout copper">
+      <p class="k">This isn't just theory</p>
+      <p>The real RTL (<code>gmsk_step2d_gardner_ted.v</code>) implements exactly this &mdash; tag-dispatch, hi/lo split, two single-DSP48-safe multiplies, recombine, truncate. Its SIM gate checks two independent things: a bit-exact match against a Python mirror of this same fixed-point arithmetic across 183 real outputs (zero mismatches), <em>and</em> a genuine physical-meaning check using a synthetic alternating-symbol test signal at three timing offsets &mdash; average error came out <strong>exactly 0.0 when perfectly locked</strong>, and <strong>+461513 / &minus;461514 when deliberately mistimed</strong> in each direction, symmetric and sign-flipped exactly as timing-recovery theory predicts. Both the Python reference model and the actual RTL simulation produced these same numbers independently.</p>
+    </div>
+  </section>
+
+  <footer>
+    Step 2a answers &ldquo;what's the value at &mu;?&rdquo; Step 2b decides when to ask and what &mu; to request. This page measures whether that request was actually right. All three are proven standalone now &mdash; next is the loop filter (Step 2e), the piece that turns this page's error number into the NCO's <code>adj_in</code> correction and finally closes the loop.
+  </footer>
+</div>
+
+<script>
+(function () {
+  // ---- shared math, mirrors hdl/gmsk_step2d_gardner_ted/sim/gen_test_vectors.py ----
+  const T = 1.0;
+  const BT_LIKE = 0.4;
+  const SIGMA = T / (2 * Math.PI * BT_LIKE);
+  const SUM_HALF_WIDTH = 8;
+
+  function nrz(k) { return (k % 2 === 0) ? 1.0 : -1.0; }
+
+  function y(t, kCenter) {
+    let total = 0;
+    for (let k = kCenter - SUM_HALF_WIDTH; k <= kCenter + SUM_HALF_WIDTH; k++) {
+      const dt = t - k * T;
+      total += nrz(k) * Math.exp(-(dt * dt) / (2 * SIGMA * SIGMA));
+    }
+    return total;
+  }
+
+  // Evaluate one symbol's Gardner error at a given eps (fraction of T),
+  // using a representative interior symbol index (the alternating test
+  // pattern is translation-symmetric away from the summation edges, so any
+  // interior k gives the same characteristic result -- matches why the SIM
+  // gate's own per-symbol variance is essentially zero for this signal).
+  const K_REF = 12;
+  function gardnerAt(eps) {
+    const yPrev = y((K_REF - 1) * T + eps * T, K_REF - 1);
+    const yMid  = y((K_REF - 0.5) * T + eps * T, K_REF);
+    const yOn   = y(K_REF * T + eps * T, K_REF);
+    const diff  = yOn - yPrev;
+    const err   = diff * yMid;
+    return { yPrev, yMid, yOn, diff, err };
+  }
+
+  // ---- theme handling ----
+  function isDark() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function colors() {
+    return isDark()
+      ? { ink: '#E7EBE5', muted: '#8D9690', border: '#2B322E', teal: '#56C6BB', copper: '#F0AE7A', violet: '#A796D6', paper: '#131715', card: '#1A201D' }
+      : { ink: '#1B211F', muted: '#6B7269', border: '#CBD0C4', teal: '#2E8F87', copper: '#8A4A1E', violet: '#6E59A8', paper: '#F2F3EE', card: '#FDFDFB' };
+  }
+
+  // ---- elements ----
+  const waveCanvas = document.getElementById('waveCanvas');
+  const waveCtx = waveCanvas.getContext('2d');
+  const sCanvas = document.getElementById('sCurveCanvas');
+  const sCtx = sCanvas.getContext('2d');
+  const epsSlider = document.getElementById('epsSlider');
+  const epsReadout = document.getElementById('epsReadout');
+  const readouts = {
+    yPrev: document.getElementById('dYPrev'),
+    yMid: document.getElementById('dYMid'),
+    yOn: document.getElementById('dYOn'),
+    diff: document.getElementById('dDiff'),
+    err: document.getElementById('dErr'),
+  };
+  const verdictEl = document.getElementById('dVerdict');
+
+  function fmt(v) { return v.toFixed(3); }
+
+  function drawWave(eps) {
+    const col = colors();
+    const W = waveCanvas.width, H = waveCanvas.height;
+    waveCtx.clearRect(0, 0, W, H);
+    waveCtx.fillStyle = col.card;
+    waveCtx.fillRect(0, 0, W, H);
+
+    const tMin = (K_REF - 1) - 1.3, tMax = K_REF + 1.3;
+    const marginL = 40, marginR = 20, marginT = 20, marginB = 26;
+    const plotW = W - marginL - marginR, plotH = H - marginT - marginB;
+    function px(t) { return marginL + (t - tMin) / (tMax - tMin) * plotW; }
+    function py(v) { return marginT + plotH / 2 - v * (plotH / 2 - 10); }
+
+    // zero line
+    waveCtx.strokeStyle = col.border;
+    waveCtx.lineWidth = 1;
+    waveCtx.beginPath();
+    waveCtx.moveTo(marginL, py(0));
+    waveCtx.lineTo(marginL + plotW, py(0));
+    waveCtx.stroke();
+
+    // true (eps=0) symbol-boundary gridlines, faint
+    waveCtx.setLineDash([3, 3]);
+    for (let k = K_REF - 2; k <= K_REF + 1; k++) {
+      waveCtx.beginPath();
+      waveCtx.moveTo(px(k), marginT);
+      waveCtx.lineTo(px(k), marginT + plotH);
+      waveCtx.stroke();
+    }
+    waveCtx.setLineDash([]);
+
+    // the curve
+    waveCtx.strokeStyle = col.teal;
+    waveCtx.lineWidth = 2;
+    waveCtx.beginPath();
+    const steps = 300;
+    for (let i = 0; i <= steps; i++) {
+      const t = tMin + (tMax - tMin) * i / steps;
+      const v = y(t, K_REF);
+      const X = px(t), Y = py(v);
+      if (i === 0) waveCtx.moveTo(X, Y); else waveCtx.lineTo(X, Y);
+    }
+    waveCtx.stroke();
+
+    // sample markers
+    const g = gardnerAt(eps);
+    function marker(t, v, color, label) {
+      const X = px(t), Y = py(v);
+      waveCtx.fillStyle = color;
+      waveCtx.beginPath();
+      waveCtx.arc(X, Y, 5.5, 0, 2 * Math.PI);
+      waveCtx.fill();
+      waveCtx.strokeStyle = col.paper;
+      waveCtx.lineWidth = 1.5;
+      waveCtx.stroke();
+      waveCtx.fillStyle = col.muted;
+      waveCtx.font = '10px "Cascadia Code", Consolas, monospace';
+      waveCtx.textAlign = 'center';
+      waveCtx.fillText(label, X, Y - 12);
+    }
+    marker((K_REF - 1) * T + eps * T, g.yPrev, col.violet, 'y_on[n-1]');
+    marker((K_REF - 0.5) * T + eps * T, g.yMid, col.copper, 'y_mid[n]');
+    marker(K_REF * T + eps * T, g.yOn, col.violet, 'y_on[n]');
+
+    return g;
+  }
+
+  function drawSCurve(eps) {
+    const col = colors();
+    const W = sCanvas.width, H = sCanvas.height;
+    sCtx.clearRect(0, 0, W, H);
+    sCtx.fillStyle = col.card;
+    sCtx.fillRect(0, 0, W, H);
+
+    const epsMin = -0.5, epsMax = 0.5;
+    const marginL = 40, marginR = 20, marginT = 16, marginB = 22;
+    const plotW = W - marginL - marginR, plotH = H - marginT - marginB;
+
+    // sample the S-curve to find a display scale
+    const N = 161;
+    const pts = [];
+    let maxAbs = 1e-9;
+    for (let i = 0; i < N; i++) {
+      const e = epsMin + (epsMax - epsMin) * i / (N - 1);
+      const err = gardnerAt(e).err;
+      pts.push([e, err]);
+      if (Math.abs(err) > maxAbs) maxAbs = Math.abs(err);
+    }
+    function px(e) { return marginL + (e - epsMin) / (epsMax - epsMin) * plotW; }
+    function py(v) { return marginT + plotH / 2 - (v / maxAbs) * (plotH / 2 - 6); }
+
+    // zero lines
+    sCtx.strokeStyle = col.border;
+    sCtx.lineWidth = 1;
+    sCtx.beginPath();
+    sCtx.moveTo(marginL, py(0));
+    sCtx.lineTo(marginL + plotW, py(0));
+    sCtx.stroke();
+    sCtx.beginPath();
+    sCtx.moveTo(px(0), marginT);
+    sCtx.lineTo(px(0), marginT + plotH);
+    sCtx.stroke();
+
+    // curve
+    sCtx.strokeStyle = col.teal;
+    sCtx.lineWidth = 2;
+    sCtx.beginPath();
+    pts.forEach(function (p, i) {
+      const X = px(p[0]), Y = py(p[1]);
+      if (i === 0) sCtx.moveTo(X, Y); else sCtx.lineTo(X, Y);
+    });
+    sCtx.stroke();
+
+    // axis labels
+    sCtx.fillStyle = col.muted;
+    sCtx.font = '10px "Cascadia Code", Consolas, monospace';
+    sCtx.textAlign = 'center';
+    sCtx.fillText('-0.5T', px(-0.5), marginT + plotH + 14);
+    sCtx.fillText('0', px(0), marginT + plotH + 14);
+    sCtx.fillText('+0.5T', px(0.5), marginT + plotH + 14);
+
+    // current-eps marker
+    const cur = gardnerAt(eps);
+    sCtx.fillStyle = col.copper;
+    sCtx.beginPath();
+    sCtx.arc(px(eps), py(cur.err), 6, 0, 2 * Math.PI);
+    sCtx.fill();
+    sCtx.strokeStyle = col.paper;
+    sCtx.lineWidth = 1.5;
+    sCtx.stroke();
+  }
+
+  function render() {
+    const eps = parseInt(epsSlider.value, 10) / 100;
+    epsReadout.textContent = (eps >= 0 ? '+' : '') + eps.toFixed(2) + 'T';
+
+    const g = drawWave(eps);
+    readouts.yPrev.textContent = fmt(g.yPrev);
+    readouts.yMid.textContent = fmt(g.yMid);
+    readouts.yOn.textContent = fmt(g.yOn);
+    readouts.diff.textContent = fmt(g.diff);
+    readouts.err.textContent = fmt(g.err);
+
+    drawSCurve(eps);
+
+    if (Math.abs(eps) < 0.02) {
+      verdictEl.textContent = 'locked -- error near zero, no correction needed';
+      verdictEl.style.color = 'var(--teal)';
+    } else if (g.err > 0) {
+      verdictEl.textContent = eps > 0
+        ? 'sampling late (ε>0) → error positive'
+        : 'error positive';
+      verdictEl.style.color = 'var(--copper-strong)';
+    } else {
+      verdictEl.textContent = eps < 0
+        ? 'sampling early (ε<0) → error negative'
+        : 'error negative';
+      verdictEl.style.color = 'var(--copper-strong)';
+    }
+  }
+
+  epsSlider.addEventListener('input', render);
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+  render();
+})();
+</script>
