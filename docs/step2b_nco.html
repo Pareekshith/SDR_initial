@@ -1,0 +1,506 @@
+<title>Step 2b — The NCO / Phase Accumulator</title>
+<style>
+  :root {
+    --paper: #F2F3EE;
+    --ink: #1B211F;
+    --muted: #6B7269;
+    --border: #CBD0C4;
+    --card-bg: #FDFDFB;
+    --copper: #A85A26;
+    --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC;
+    --teal: #2E8F87;
+    --teal-soft: #CFE7E4;
+    --teal-line: #2E8F87;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131715;
+      --ink: #E7EBE5;
+      --muted: #8D9690;
+      --border: #2B322E;
+      --card-bg: #1A201D;
+      --copper: #DE9257;
+      --copper-strong: #F0AE7A;
+      --copper-soft: #3A2A1C;
+      --teal: #56C6BB;
+      --teal-soft: #16302C;
+      --teal-line: #56C6BB;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131715; --ink: #E7EBE5; --muted: #8D9690; --border: #2B322E;
+    --card-bg: #1A201D; --copper: #DE9257; --copper-strong: #F0AE7A;
+    --copper-soft: #3A2A1C; --teal: #56C6BB; --teal-soft: #16302C; --teal-line: #56C6BB;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F2F3EE; --ink: #1B211F; --muted: #6B7269; --border: #CBD0C4;
+    --card-bg: #FDFDFB; --copper: #A85A26; --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC; --teal: #2E8F87; --teal-soft: #CFE7E4; --teal-line: #2E8F87;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 56px 28px 100px; }
+
+  .eyebrow {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-weight: 700; font-size: clamp(26px, 4.2vw, 36px);
+    letter-spacing: -0.01em; text-wrap: balance; margin: 0 0 10px;
+  }
+  .subtitle { font-size: 17px; color: var(--muted); max-width: 58ch; margin: 0 0 40px; }
+
+  h2 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--copper-strong); font-weight: 700;
+    margin: 48px 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  section:first-of-type h2 { margin-top: 0; }
+  h3 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 15px; color: var(--ink); margin: 26px 0 10px;
+  }
+  p { max-width: 64ch; font-size: 16.5px; margin: 0 0 16px; }
+  .max-none { max-width: none; }
+  strong { color: var(--copper-strong); font-weight: 700; }
+  em { color: var(--ink); }
+  code {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 0.88em; background: var(--teal-soft); color: var(--teal);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  a { color: var(--teal); }
+
+  .callout {
+    background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--teal);
+    border-radius: 8px; padding: 16px 20px; margin: 0 0 20px; box-shadow: var(--shadow);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .k {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 6px;
+  }
+  .callout.copper { border-left-color: var(--copper); }
+  .callout.copper .k { color: var(--copper-strong); }
+
+  /* equation blocks */
+  .eq {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; margin: 0 0 20px; font-size: 15px; overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .eq .line { margin: 4px 0; white-space: pre; }
+  .eq .comment { color: var(--muted); font-style: italic; }
+
+  /* block diagram (matches step1_discriminator.html / step2a_interpolator.html) */
+  .diagram {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    margin: 8px 0 8px; padding: 26px 20px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+  .dblock {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 12.5px; text-align: center; padding: 12px 14px; border-radius: 8px;
+    border: 1.5px solid var(--border); background: var(--paper); color: var(--ink);
+    flex: none; line-height: 1.35; min-width: 92px;
+  }
+  .dblock.accent { border-color: var(--teal); color: var(--teal); }
+  .dblock.out { border-color: var(--copper); color: var(--copper-strong); }
+  .darrow { flex: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+  .dgroup { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+  .dgroup .caption { font-size: 10px; color: var(--muted); font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; letter-spacing: 0.04em; }
+  .dcol { display: flex; flex-direction: column; gap: 8px; flex: none; }
+
+  figure { margin: 0 0 8px; }
+  figcaption {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; margin-top: 10px;
+  }
+
+  ul.notes { padding-left: 20px; margin: 0 0 20px; }
+  ul.notes li { font-size: 15.5px; margin-bottom: 10px; max-width: 60ch; }
+  ul.notes li::marker { color: var(--copper); }
+
+  /* worked-example table */
+  .tbl-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 420px; }
+  thead th {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    text-align: left; color: var(--muted); background: var(--card-bg);
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: top; background: var(--card-bg); font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13.5px; }
+  tbody td:first-child { font-family: Georgia, serif; font-size: 14.5px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.final td { font-weight: 700; color: var(--copper-strong); }
+  tbody tr.strobe-row td { background: var(--copper-soft); }
+
+  /* interactive demo */
+  .demo {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px 22px 18px; margin: 8px 0 8px; box-shadow: var(--shadow);
+  }
+  .demo canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: var(--paper); border: 1px solid var(--border); }
+  .demo-controls { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
+  .demo-controls label { font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; font-size: 12.5px; color: var(--muted); letter-spacing: 0.04em; }
+  .demo-controls input[type=range] { flex: 1; min-width: 160px; accent-color: var(--teal); }
+  .demo-readout {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 13px; color: var(--teal); min-width: 62px; text-align: right;
+  }
+  .demo-coeffs {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 10px;
+    margin-top: 14px; font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13px;
+  }
+  .demo-coeffs div { background: var(--paper); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .demo-coeffs .lbl { color: var(--muted); font-size: 11px; display:block; margin-bottom: 2px; }
+  .demo-y { color: var(--copper-strong); font-weight: 700; }
+  .demo-btnrow { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; align-items: center; }
+  button.demo-btn {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 12.5px; letter-spacing: 0.04em; font-weight: 700;
+    padding: 9px 16px; border-radius: 7px; border: 1.5px solid var(--teal);
+    background: var(--teal-soft); color: var(--teal); cursor: pointer;
+  }
+  button.demo-btn:hover { filter: brightness(1.08); }
+  button.demo-btn.secondary { border-color: var(--border); background: var(--paper); color: var(--muted); }
+  button.demo-btn.playing { background: var(--copper-soft); border-color: var(--copper); color: var(--copper-strong); }
+  select.demo-select {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 13px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--paper); color: var(--ink);
+  }
+
+  footer { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 480px) {
+    .wrap { padding: 36px 18px 72px; }
+    .diagram { padding: 18px 14px; }
+    .demo { padding: 16px 14px; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Step 2b &middot; Technical Note</p>
+  <h1>The NCO / Phase Accumulator</h1>
+  <p class="subtitle">Step 2a can compute the value at <em>any</em> fractional position &mu; you hand it. This block is the piece that decides, sample after sample: is <em>this</em> the moment a symbol actually lands, and if so, what's &mu;?</p>
+
+  <section>
+    <h2>What problem is this solving?</h2>
+    <p>The interpolator from Step 2a is a pure function: give it four neighboring samples and a fraction &mu; between 0 and 1, and it hands back the signal's value at that fractional position &mdash; correctly, for <em>any</em> &mu; you ask. But it never asks "should I even bother asking this cycle?" or "what's the right &mu; <em>right now</em>?" &mdash; something else has to decide that, every single input sample, forever, while the transmitter's clock and the receiver's clock drift slowly apart.</p>
+    <p>That's this block's whole job. It watches every arriving ADC sample and keeps a running tally of "how far are we through the current symbol." Once per symbol &mdash; roughly every 4 samples, for this project's 4-samples-per-symbol target &mdash; that tally rolls over, and <strong>at exactly that moment</strong> it raises a flag (<code>strobe</code>) and reports <strong>exactly how far past the ideal instant</strong> the nearest real sample landed (<code>mu_out</code>). Feed that pair straight into Step 2a, and the two blocks together answer the real question: "what did the signal look like, right at the center of <em>this</em> symbol?"</p>
+  </section>
+
+  <section>
+    <h2>The measuring-cup picture</h2>
+    <p>Forget bits for a moment. Picture a measuring cup marked from empty (0) to exactly full (1 &mdash; representing one full symbol period). Every time a new ADC sample arrives, you pour in a fixed splash &mdash; always the same size, <code>1&frasl;sps</code> of the cup's capacity (a quarter-cup splash, for this project's 4-samples-per-symbol target).</p>
+    <p>Pour four splashes and the cup is exactly full &mdash; that's the ordinary case, and it's also the moment a symbol boundary has just occurred. But cups (and accumulators) don't stop at full: the fourth splash <em>overflows</em>. Whatever spills over the rim, as a fraction of one splash, tells you something useful and specific &mdash; <strong>how far past that particular sample the true symbol center actually fell.</strong> Empty the cup back down to just that spillover amount, and you're ready to start filling toward the <em>next</em> symbol, with the overflow correctly carried forward rather than thrown away.</p>
+    <div class="callout">
+      <p class="k">The two signals this produces</p>
+      <p><code>strobe</code> is "the cup just overflowed" &mdash; a single-cycle pulse marking a real symbol instant, one per roughly-<code>sps</code> input samples. <code>mu_out</code> is "how much spilled over," rescaled into the units Step 2a expects (a fraction of <em>one sample</em>, not one cup) &mdash; feed it straight into the interpolator's <code>mu_in</code> and it computes the signal's value at exactly the true symbol center, not just at whatever sample happened to be closest.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>From cup to bits: the real fixed-point picture</h2>
+    <p>The RTL replaces the cup with a single register, <code>phase_acc</code> &mdash; a plain binary number where <strong>all-ones-plus-one (a full wrap, 2<sup>STEP_WIDTH</sup>) represents exactly one symbol period.</strong> Every valid input sample, it does one thing:</p>
+    <div class="eq">
+      <div class="line">phase_acc &larr; (phase_acc + step_in + adj_in)  <span class="comment">// mod 2^STEP_WIDTH -- wraparound is automatic, free, built into fixed-width arithmetic</span></div>
+      <div class="line">strobe    &larr; carry-out of that add            <span class="comment">// did it just cross the wrap point?</span></div>
+      <div class="line">mu_out    &larr; the wrapped remainder, rescaled   <span class="comment">// see below -- just a bit-select, no real math</span></div>
+    </div>
+    <p><code>step_in</code> is the "splash size" &mdash; nominally <code>1/sps</code>, expressed as a fraction of 2<sup>STEP_WIDTH</sup>. For this project's real target (4 samples/symbol), that's exactly a quarter: <code>step_in = 2<sup>STEP_WIDTH&minus;2</sup></code>. <code>adj_in</code> is a signed trim, added in every cycle right alongside <code>step_in</code> &mdash; today it's tied to <code>0</code> (this sub-step tests the accumulator standalone), but it's already wired in for exactly one reason: once Step 3's Gardner loop-filter exists, its correction lands here, nudging the splash size very slightly larger or smaller every sample to speed up or slow down the count &mdash; nothing about this module needs to change when that happens.</p>
+  </section>
+
+  <section>
+    <h2>Why <code>mu_out</code> is a free bit-select, not a divide</h2>
+    <p>There's one genuinely subtle step, worth being explicit about: the wrapped remainder inside <code>phase_acc</code> is measured in <strong>symbol-period units</strong> (2<sup>STEP_WIDTH</sup> = one whole symbol), but Step 2a's <code>mu_in</code> needs a fraction of <strong>one sample period</strong> &mdash; a different, smaller unit. Converting between them means multiplying by <code>sps</code>, since one symbol period is defined as exactly <code>sps</code> sample periods.</p>
+    <p>Multiplying a fixed-point fraction by a power of two is <em>free</em> in hardware &mdash; it's just sliding the binary point, i.e. reading a different set of bits, no adder or multiplier involved at all. That's why this project fixes <code>sps</code> (via a <code>LOG2_SPS</code> parameter, default 2, meaning 4 samples/symbol &mdash; this project's real target) to a power of two: the whole "remainder &times; sps" rescale collapses into picking <code>MU_WIDTH</code> bits out of <code>phase_acc</code> starting a few places lower down, nothing more.</p>
+    <ul class="notes">
+      <li><strong>If <code>adj_in</code> stays zero</strong>, this rescale is exact &mdash; <code>sps</code> really is 4, and the bit-select is exactly right.</li>
+      <li><strong>Once the loop filter starts trimming <code>adj_in</code></strong>, the true instantaneous rate drifts a hair away from exactly 1/4 &mdash; the bit-select then rescales using the <em>nominal</em> sps instead of the true one, a small, standard, deliberately-accepted approximation (the correction is always tiny next to the nominal step), the same category of accepted rounding this project's interpolator already leans on for its own <code>/6</code> constant-division.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Try it: step through samples, watch the cup fill</h2>
+    <div class="demo">
+      <canvas id="ncoCanvas" width="720" height="300"></canvas>
+      <div class="demo-btnrow">
+        <button class="demo-btn" id="btnStep">Step &#9654;</button>
+        <button class="demo-btn secondary" id="btnPlay">Auto-play</button>
+        <button class="demo-btn secondary" id="btnReset">Reset</button>
+        <label for="spsSelect" style="font-family:'Bahnschrift','Roboto Condensed','Arial Narrow',sans-serif;font-size:12.5px;color:var(--muted);letter-spacing:0.04em;">sps</label>
+        <select class="demo-select" id="spsSelect">
+          <option value="2">2</option>
+          <option value="4" selected>4</option>
+          <option value="8">8</option>
+        </select>
+      </div>
+      <div class="demo-controls">
+        <label for="adjSlider">adj_in (trim)</label>
+        <input type="range" id="adjSlider" min="-30" max="30" step="1" value="0">
+        <span class="demo-readout" id="adjReadout">+0%</span>
+      </div>
+      <div class="demo-coeffs">
+        <div><span class="lbl">sample #</span><span id="dSample">0</span></div>
+        <div><span class="lbl">phase_acc</span><span id="dPhase">0.000</span></div>
+        <div><span class="lbl">strobe?</span><span id="dStrobe">&mdash;</span></div>
+        <div><span class="lbl">mu_out</span><span id="dMu" class="demo-y">&mdash;</span></div>
+        <div><span class="lbl">strobes so far</span><span id="dCount">0</span></div>
+        <div><span class="lbl">avg gap</span><span id="dAvg">&mdash;</span></div>
+      </div>
+    </div>
+    <p style="margin-top:14px;">The bar is <code>phase_acc</code>, filling toward the right by one splash (<code>step_in</code>, dashed line) each time you click <strong>Step</strong>. When it would overflow past the far edge, it wraps &mdash; the overflow amount (highlighted in copper) becomes <code>mu_out</code>, and the timeline below records a strobe tick. Drag <strong>adj_in</strong> away from zero and watch the strobes drift closer together (speeding up) or further apart (slowing down) &mdash; exactly the lever Step 3's Gardner loop will pull automatically, later, to keep the receiver locked onto the transmitter's true symbol rate.</p>
+  </section>
+
+  <section>
+    <h2>Worked example, by hand</h2>
+    <p>Real module defaults: <code>STEP_WIDTH=32</code>, <code>sps=4</code> (<code>LOG2_SPS=2</code>), <code>step_in = 2<sup>30</sup> = 1073741824</code> exactly, <code>adj_in=0</code>. Starting from a non-zero phase (say the accumulator already sat at <code>2<sup>29</sup></code>, i.e. already half a sample-period past a boundary) shows the interesting case &mdash; not just the trivial <code>mu=0</code> alignment:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Sample</th><th>phase_acc before</th><th>+ step_in</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>n=0</td><td>536870912  <span style="color:var(--muted)">(0.125)</span></td><td>+1073741824</td><td>1610612736  (0.375)</td></tr>
+          <tr><td>n=1</td><td>1610612736</td><td>+1073741824</td><td>2684354560  (0.625)</td></tr>
+          <tr><td>n=2</td><td>2684354560</td><td>+1073741824</td><td>3758096384  (0.875)</td></tr>
+          <tr class="strobe-row final"><td>n=3</td><td>3758096384</td><td>+1073741824</td><td><strong>wraps</strong> &rarr; remainder 536870912 (0.125 symbol)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>At <code>n=3</code>, <code>strobe=1</code> and the remainder is <code>0.125</code> of a <em>symbol</em> &mdash; rescale by <code>sps=4</code> (a free 2-bit shift) to get <code>mu = 0.5</code>, a fraction of <em>one sample</em>. That's the number handed to Step 2a's <code>mu_in</code>: the true symbol center fell exactly halfway between two real ADC samples, and the interpolator can now compute the signal's value right there, not at either neighboring sample alone.</p>
+    <div class="callout copper">
+      <p class="k">This isn't just theory</p>
+      <p>The real RTL (<code>gmsk_step2b_nco.v</code>) implements exactly this &mdash; one register, one add, one bit-select, nothing else (no multiply anywhere in this module, unlike Step 2a's Horner stages, so none of the DSP48/timing lessons from that block apply here). Its SIM gate checks it against a bit-exact Python mirror of this same fixed-point formula &mdash; not a tolerance, an exact match, since this is pure integer arithmetic with nothing analog or approximate in it &mdash; across 3000 samples spanning three phases (nominal <code>adj_in=0</code>, and two nonzero trims), and passed with zero mismatches on every single cycle.</p>
+    </div>
+  </section>
+
+  <footer>
+    Step 2a answers "what's the value at &mu;?" for any &mu; you ask. This block decides, every sample, whether right now is worth asking, and exactly what &mu; to ask for. Together they're everything Step 3's Gardner timing-error detector needs downstream &mdash; comparing interpolated values just before and after each strobe to measure <em>how wrong</em> the current &mu; estimate is, then closing the loop by feeding that error back into this block's own <code>adj_in</code>.
+  </footer>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('ncoCanvas');
+  const ctx = canvas.getContext('2d');
+  const btnStep = document.getElementById('btnStep');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnReset = document.getElementById('btnReset');
+  const spsSelect = document.getElementById('spsSelect');
+  const adjSlider = document.getElementById('adjSlider');
+  const adjReadout = document.getElementById('adjReadout');
+  const readouts = {
+    sample: document.getElementById('dSample'),
+    phase: document.getElementById('dPhase'),
+    strobe: document.getElementById('dStrobe'),
+    mu: document.getElementById('dMu'),
+    count: document.getElementById('dCount'),
+    avg: document.getElementById('dAvg'),
+  };
+
+  const HISTORY_LEN = 40;
+  let state = null;
+  let playTimer = null;
+
+  function isDark() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function colors() {
+    return isDark()
+      ? { ink: '#E7EBE5', muted: '#8D9690', border: '#2B322E', teal: '#56C6BB', copper: '#F0AE7A', paper: '#131715', card: '#1A201D' }
+      : { ink: '#1B211F', muted: '#6B7269', border: '#CBD0C4', teal: '#2E8F87', copper: '#8A4A1E', paper: '#F2F3EE', card: '#FDFDFB' };
+  }
+
+  function reset() {
+    state = {
+      sample: 0,
+      phase: 0,          // in [0,1), fraction of one symbol period
+      lastSpill: null,    // fraction of one symbol period, at the most recent strobe
+      lastStrobe: false,
+      strobeSamples: [],  // sample indices at which a strobe fired
+      history: [],        // { sample, strobed }
+    };
+    render();
+  }
+
+  function step() {
+    const sps = parseFloat(spsSelect.value);
+    const adjPct = parseFloat(adjSlider.value) / 100;  // -0.30..+0.30
+    const nominalStep = 1 / sps;
+    const stepAmt = nominalStep * (1 + adjPct);
+
+    const sum = state.phase + stepAmt;
+    const wrapped = sum >= 1.0;
+    const newPhase = sum - Math.floor(sum);
+
+    state.sample += 1;
+    state.phase = newPhase;
+    state.lastStrobe = wrapped;
+    if (wrapped) {
+      state.lastSpill = newPhase; // remainder, in symbol-period units
+      state.strobeSamples.push(state.sample);
+    }
+    state.history.push({ sample: state.sample, strobed: wrapped });
+    if (state.history.length > HISTORY_LEN) state.history.shift();
+
+    render();
+  }
+
+  function render() {
+    const sps = parseFloat(spsSelect.value);
+    adjReadout.textContent = (adjSlider.value >= 0 ? '+' : '') + adjSlider.value + '%';
+
+    readouts.sample.textContent = state.sample;
+    readouts.phase.textContent = state.phase.toFixed(3);
+    readouts.strobe.textContent = state.lastStrobe ? 'YES' : '—';
+    readouts.mu.textContent = state.lastSpill === null ? '—' : (state.lastSpill * sps).toFixed(3);
+    readouts.count.textContent = state.strobeSamples.length;
+    if (state.strobeSamples.length >= 2) {
+      const gaps = [];
+      for (let i = 1; i < state.strobeSamples.length; i++) gaps.push(state.strobeSamples[i] - state.strobeSamples[i - 1]);
+      const avg = gaps.reduce(function (a, b) { return a + b; }, 0) / gaps.length;
+      readouts.avg.textContent = avg.toFixed(2) + ' samples';
+    } else {
+      readouts.avg.textContent = '—';
+    }
+
+    draw();
+  }
+
+  function draw() {
+    const col = colors();
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = col.card;
+    ctx.fillRect(0, 0, W, H);
+
+    const sps = parseFloat(spsSelect.value);
+
+    // --- the "cup" bar: phase in [0,1) mapped across the width ---
+    const barX = 40, barW = W - 80, barY = 50, barH = 60;
+
+    // nominal splash tick marks
+    ctx.strokeStyle = col.border;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    for (let i = 1; i < sps; i++) {
+      const x = barX + barW * (i / sps);
+      ctx.beginPath();
+      ctx.moveTo(x, barY);
+      ctx.lineTo(x, barY + barH);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // bar outline
+    ctx.strokeStyle = col.muted;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(barX, barY, barW, barH);
+
+    // filled portion = current phase_acc
+    const fillW = barW * state.phase;
+    ctx.fillStyle = col.teal + '55';
+    ctx.fillRect(barX, barY, fillW, barH);
+    ctx.strokeStyle = col.teal;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(barX + fillW, barY - 6);
+    ctx.lineTo(barX + fillW, barY + barH + 6);
+    ctx.stroke();
+
+    // spillover marker, drawn at the START of the bar (the wrapped remainder)
+    if (state.lastStrobe && state.lastSpill !== null) {
+      const spillW = barW * state.lastSpill;
+      ctx.fillStyle = col.copper + '66';
+      ctx.fillRect(barX, barY, spillW, barH);
+      ctx.strokeStyle = col.copper;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(barX, barY, spillW, barH);
+    }
+
+    ctx.fillStyle = col.muted;
+    ctx.font = '11px "Cascadia Code", Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0', barX, barY + barH + 18);
+    ctx.textAlign = 'right';
+    ctx.fillText('1 symbol', barX + barW, barY + barH + 18);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = col.ink;
+    ctx.font = 'bold 12px "Bahnschrift", "Roboto Condensed", sans-serif';
+    ctx.fillText(state.lastStrobe ? 'STROBE! wrapped this sample' : 'filling…', barX + barW / 2, barY - 14);
+
+    // --- history timeline strip ---
+    const tlY = barY + barH + 60, tlH = 28;
+    const n = state.history.length || 1;
+    const cellW = (barW) / Math.max(n, sps * 3);
+    ctx.font = '10px "Bahnschrift", "Roboto Condensed", sans-serif';
+    ctx.fillStyle = col.muted;
+    ctx.textAlign = 'left';
+    ctx.fillText('recent samples → (copper = strobe)', barX, tlY - 10);
+
+    ctx.strokeStyle = col.border;
+    ctx.strokeRect(barX, tlY, barW, tlH);
+    state.history.forEach(function (h, i) {
+      const x = barX + i * cellW;
+      ctx.fillStyle = h.strobed ? col.copper : (col.paper === '#131715' ? '#22282500'.slice(0,7) : col.border);
+      if (h.strobed) {
+        ctx.fillStyle = col.copper;
+        ctx.fillRect(x, tlY + 2, Math.max(cellW - 1, 2), tlH - 4);
+      }
+    });
+  }
+
+  btnStep.addEventListener('click', step);
+  btnReset.addEventListener('click', function () {
+    stopPlay();
+    reset();
+  });
+  spsSelect.addEventListener('change', function () { stopPlay(); reset(); });
+  adjSlider.addEventListener('input', render);
+
+  function stopPlay() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    btnPlay.textContent = 'Auto-play';
+    btnPlay.classList.remove('playing');
+  }
+  btnPlay.addEventListener('click', function () {
+    if (playTimer) {
+      stopPlay();
+    } else {
+      btnPlay.textContent = 'Stop';
+      btnPlay.classList.add('playing');
+      playTimer = setInterval(step, 220);
+    }
+  });
+
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+  reset();
+})();
+</script>
