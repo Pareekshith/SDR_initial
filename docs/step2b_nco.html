@@ -296,8 +296,47 @@
     </div>
   </section>
 
+  <section>
+    <h2>Update &middot; Sub-step B2: two crossings, one accumulator</h2>
+    <p><em>Added 2026-08-16, once <a href="step2d_gardner_ted.html">Step 2d's Gardner TED</a> existed and needed real on-time/mid-point sample pairs, not the placeholder it was tested with.</em> Gardner's algorithm (see that page) needs THREE interpolated samples per symbol, not one &mdash; the on-time sample, the previous on-time sample, and one taken exactly <em>halfway</em> between them. The interpolator can already produce that mid-point sample &mdash; it recomputes an output every single real ADC sample regardless, using whatever <code>mu_in</code> currently is. What was missing was something to hand it the right <code>mu</code> at the right cycle, twice a symbol instead of once.</p>
+    <p><strong>The extension: watch for a second threshold crossing from the exact same accumulator.</strong> The original design (above) only ever asks "did we wrap past 1.0 this sample?" &mdash; the on-time instant. Sub-step B2 also asks "did we cross past 0.5 this sample?" &mdash; the mid-symbol instant, exactly halfway between two on-time instants by construction. Both events share the same <code>strobe</code>/<code>mu_out</code> pair, with a new <code>is_midpoint</code> tag saying which kind just fired.</p>
+    <div class="callout copper">
+      <p class="k">A real mistake, caught before it became RTL</p>
+      <p>The first description of how to compute <code>mu</code> for the mid-point crossing (in this project's own design notes) was <strong>wrong</strong> &mdash; it proposed doubling the accumulator value and reusing the bit-select on that. It sounded right, was internally consistent when reasoned through in prose, and was written down as the plan. It was only caught by writing a script that checked it against an independently-derived floating-point answer for hundreds of crossing events <em>before</em> any Verilog existed &mdash; and it failed. The actual, <em>simpler</em> answer, below, was found by fixing that check until it passed. This is the same discipline this project's SIM gates have relied on throughout (never trust a derivation on its own merits, check it against an independent reference) &mdash; just applied one level earlier, to an architecture decision, before any code existed to test.</p>
+    </div>
+    <p><strong>The actual mechanism, once corrected: the exact same bit-select gives the right &mu; for BOTH crossing types, completely unmodified.</strong> No doubling, no extra shift, nothing new beyond detecting that a crossing happened at all. Here's why: the mid-point &mu; should equal <code>(x&minus;0.5)&times;sps</code> (how far past the 0.5 mark, rescaled to sample units) where <code>x</code> is the crossing-time phase. Expand that out and it's exactly the on-time formula, <code>x&times;sps</code>, minus a constant, <code>0.5&times;sps</code>. Since <code>sps</code> is always a power of two (so <code>0.5&times;sps</code> is always a whole number), that constant is an exact integer multiple of the register width &mu; gets truncated to &mdash; so it vanishes completely, and both formulas collapse to the identical bit pattern.</p>
+    <div class="eq">
+      <div class="line">wrap_w      = carry out of (phase_acc + step_in + adj_in)     <span class="comment">// on-time: crossed 1.0</span></div>
+      <div class="line">mid_cross_w = !wrap_w &amp;&amp; (old top bit=0) &amp;&amp; (new top bit=1)  <span class="comment">// mid-point: crossed 0.5, no wrap</span></div>
+      <div class="line">mu_out      = new_phase[HIBIT:LOBIT]                          <span class="comment">// SAME bit-select, either crossing</span></div>
+    </div>
+
+    <div class="demo">
+      <canvas id="b2Canvas" width="720" height="300"></canvas>
+      <div class="demo-btnrow">
+        <button class="demo-btn" id="b2BtnStep">Step &#9654;</button>
+        <button class="demo-btn secondary" id="b2BtnPlay">Auto-play</button>
+        <button class="demo-btn secondary" id="b2BtnReset">Reset</button>
+      </div>
+      <div class="demo-coeffs">
+        <div><span class="lbl">sample #</span><span id="b2Sample">0</span></div>
+        <div><span class="lbl">phase_acc</span><span id="b2Phase">0.000</span></div>
+        <div><span class="lbl">event</span><span id="b2Event">&mdash;</span></div>
+        <div><span class="lbl">mu_out</span><span id="b2Mu" class="demo-y">&mdash;</span></div>
+        <div><span class="lbl">on-time count</span><span id="b2OnCount">0</span></div>
+        <div><span class="lbl">mid-point count</span><span id="b2MidCount">0</span></div>
+      </div>
+    </div>
+    <p style="margin-top:14px;">Same fill bar as before, but now with <strong>two</strong> tick marks worth watching: the halfway line (mid-point, copper) and the far edge (on-time, teal). Step through and watch the timeline below fill with <em>two</em> alternating colors instead of one &mdash; teal for on-time, copper for mid-point, evenly interleaved, exactly the ON,MID,ON,MID,... stream <a href="step2d_gardner_ted.html">the Gardner TED</a> needs.</p>
+
+    <div class="callout">
+      <p class="k">This isn't just theory</p>
+      <p>The real RTL (<code>gmsk_step2b2_nco.v</code>) implements exactly this &mdash; a new, separate module (<code>gmsk_step2b_nco</code> stays untouched and hardware-validated as-is). Its SIM gate checks the bit-select claim above two ways: bit-exact match against a Python mirror of the RTL's own formula (3000 samples, 3 phases, 750 on-time + 750 mid-point strobes, zero mismatches), <em>and</em> a from-scratch independent floating-point re-derivation of what &mu; should physically be at 1500 real crossing events &mdash; the same check that caught the original doubling mistake, re-run here to prove the corrected RTL, not just the corrected reasoning.</p>
+    </div>
+  </section>
+
   <footer>
-    Step 2a answers "what's the value at &mu;?" for any &mu; you ask. This block decides, every sample, whether right now is worth asking, and exactly what &mu; to ask for. Together they're everything Step 3's Gardner timing-error detector needs downstream &mdash; comparing interpolated values just before and after each strobe to measure <em>how wrong</em> the current &mu; estimate is, then closing the loop by feeding that error back into this block's own <code>adj_in</code>.
+    Step 2a answers "what's the value at &mu;?" for any &mu; you ask. This block decides, every sample, whether right now is worth asking, and exactly what &mu; to ask for &mdash; and since sub-step B2, TWICE a symbol instead of once, feeding <a href="step2d_gardner_ted.html">Step 2d's Gardner TED</a> the real on-time/mid-point pair it needs. Next: the loop filter, which turns the TED's error number into this block's own <code>adj_in</code> correction and finally closes the loop.
   </footer>
 </div>
 
@@ -483,6 +522,188 @@
   });
   spsSelect.addEventListener('change', function () { stopPlay(); reset(); });
   adjSlider.addEventListener('input', render);
+
+  function stopPlay() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    btnPlay.textContent = 'Auto-play';
+    btnPlay.classList.remove('playing');
+  }
+  btnPlay.addEventListener('click', function () {
+    if (playTimer) {
+      stopPlay();
+    } else {
+      btnPlay.textContent = 'Stop';
+      btnPlay.classList.add('playing');
+      playTimer = setInterval(step, 220);
+    }
+  });
+
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+  reset();
+})();
+
+(function () {
+  // Sub-step B2 demo -- dual-threshold version of the demo above. Fixed
+  // sps=4 (this project's real target) to keep the two tick marks (0.5
+  // and 1.0) simple to read; the original demo's sps selector isn't
+  // needed here since the point being illustrated (two crossing types
+  // from one accumulator) doesn't depend on sps.
+  const SPS = 4;
+  const canvas = document.getElementById('b2Canvas');
+  const ctx = canvas.getContext('2d');
+  const btnStep = document.getElementById('b2BtnStep');
+  const btnPlay = document.getElementById('b2BtnPlay');
+  const btnReset = document.getElementById('b2BtnReset');
+  const readouts = {
+    sample: document.getElementById('b2Sample'),
+    phase: document.getElementById('b2Phase'),
+    event: document.getElementById('b2Event'),
+    mu: document.getElementById('b2Mu'),
+    onCount: document.getElementById('b2OnCount'),
+    midCount: document.getElementById('b2MidCount'),
+  };
+
+  const HISTORY_LEN = 40;
+  let state = null;
+  let playTimer = null;
+
+  function isDark() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function colors() {
+    return isDark()
+      ? { ink: '#E7EBE5', muted: '#8D9690', border: '#2B322E', teal: '#56C6BB', copper: '#F0AE7A', paper: '#131715', card: '#1A201D' }
+      : { ink: '#1B211F', muted: '#6B7269', border: '#CBD0C4', teal: '#2E8F87', copper: '#8A4A1E', paper: '#F2F3EE', card: '#FDFDFB' };
+  }
+
+  function reset() {
+    state = {
+      sample: 0,
+      phase: 0,
+      lastEvent: null,       // null | 'on' | 'mid'
+      lastMu: null,
+      onCount: 0,
+      midCount: 0,
+      history: [],           // { sample, event }
+    };
+    render();
+  }
+
+  function step() {
+    const stepAmt = 1 / SPS;
+    const oldPhase = state.phase;
+    const sum = oldPhase + stepAmt;
+    const wrapped = sum >= 1.0;
+    const newPhase = sum - Math.floor(sum);
+    const midCross = !wrapped && oldPhase < 0.5 && newPhase >= 0.5;
+
+    state.sample += 1;
+    state.phase = newPhase;
+
+    if (wrapped) {
+      state.lastEvent = 'on';
+      state.lastMu = newPhase * SPS;
+      state.onCount += 1;
+    } else if (midCross) {
+      state.lastEvent = 'mid';
+      // same bit-select formula, expressed in floating point: (x*sps) mod 1
+      state.lastMu = (newPhase * SPS) % 1.0;
+      state.midCount += 1;
+    } else {
+      state.lastEvent = null;
+    }
+    state.history.push({ sample: state.sample, event: state.lastEvent });
+    if (state.history.length > HISTORY_LEN) state.history.shift();
+
+    render();
+  }
+
+  function render() {
+    readouts.sample.textContent = state.sample;
+    readouts.phase.textContent = state.phase.toFixed(3);
+    readouts.event.textContent = state.lastEvent === 'on' ? 'ON-TIME'
+      : state.lastEvent === 'mid' ? 'MID-POINT' : '—';
+    readouts.mu.textContent = state.lastMu === null ? '—' : state.lastMu.toFixed(3);
+    readouts.onCount.textContent = state.onCount;
+    readouts.midCount.textContent = state.midCount;
+    draw();
+  }
+
+  function draw() {
+    const col = colors();
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = col.card;
+    ctx.fillRect(0, 0, W, H);
+
+    const barX = 40, barW = W - 80, barY = 50, barH = 60;
+
+    // the 0.5 tick (copper, mid-point) and the far edge (implicit, on-time)
+    ctx.strokeStyle = col.copper;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    const midX = barX + barW * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(midX, barY);
+    ctx.lineTo(midX, barY + barH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = col.muted;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(barX, barY, barW, barH);
+
+    const fillW = barW * state.phase;
+    ctx.fillStyle = col.teal + '55';
+    ctx.fillRect(barX, barY, fillW, barH);
+    ctx.strokeStyle = col.teal;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(barX + fillW, barY - 6);
+    ctx.lineTo(barX + fillW, barY + barH + 6);
+    ctx.stroke();
+
+    ctx.fillStyle = col.muted;
+    ctx.font = '11px "Cascadia Code", Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0', barX, barY + barH + 18);
+    ctx.textAlign = 'center';
+    ctx.fillText('0.5 (mid)', midX, barY + barH + 18);
+    ctx.textAlign = 'right';
+    ctx.fillText('1.0 (on-time)', barX + barW, barY + barH + 18);
+
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px "Bahnschrift", "Roboto Condensed", sans-serif';
+    ctx.fillStyle = state.lastEvent === 'on' ? col.teal : state.lastEvent === 'mid' ? col.copper : col.ink;
+    const label = state.lastEvent === 'on' ? 'ON-TIME STROBE'
+      : state.lastEvent === 'mid' ? 'MID-POINT STROBE' : 'filling…';
+    ctx.fillText(label, barX + barW / 2, barY - 14);
+
+    // history timeline, two-color
+    const tlY = barY + barH + 44, tlH = 28;
+    const n = state.history.length || 1;
+    const cellW = barW / Math.max(n, SPS * 4);
+    ctx.font = '10px "Bahnschrift", "Roboto Condensed", sans-serif';
+    ctx.fillStyle = col.muted;
+    ctx.textAlign = 'left';
+    ctx.fillText('recent samples → (teal = on-time, copper = mid-point)', barX, tlY - 10);
+
+    ctx.strokeStyle = col.border;
+    ctx.strokeRect(barX, tlY, barW, tlH);
+    state.history.forEach(function (h, i) {
+      if (!h.event) return;
+      const x = barX + i * cellW;
+      ctx.fillStyle = h.event === 'on' ? col.teal : col.copper;
+      ctx.fillRect(x, tlY + 2, Math.max(cellW - 1, 2), tlH - 4);
+    });
+  }
+
+  btnStep.addEventListener('click', step);
+  btnReset.addEventListener('click', function () { stopPlay(); reset(); });
 
   function stopPlay() {
     if (playTimer) { clearInterval(playTimer); playTimer = null; }
