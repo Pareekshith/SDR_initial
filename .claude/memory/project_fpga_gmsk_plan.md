@@ -807,6 +807,14 @@ Rebuilt (`reset_run impl_1` only -- constraint-only change, no RTL/synth touched
 
 **This is a genuinely clean, fully-closed bitstream** -- not a "confined to accepted categories" judgment call this time, an actual zero-violation build. Ready for `BOOT.BIN` rebuild + hardware deployment pending Pari's go-ahead (deployment to physical hardware always needs explicit confirmation per this project's standing discipline).
 
+## BOOT.BIN deployed to the ZedBoard, new bitstream confirmed live (2026-08-23)
+
+Pari gave the go-ahead to deploy. Followed the established recipe from the 2026-08-01 `BOOT.BIN` build exactly: backed up the live on-board `/boot/BOOT.BIN` to a timestamped `BOOT.BIN.prev_20260823172356` first (existing `BOOT.BIN.stock_backup` from the original reflash left untouched), `pscp`'d the freshly-rebuilt `hdl/boot_build/BOOT.BIN.new` over as the new `/boot/BOOT.BIN`, verified md5sum matched byte-for-byte before trusting it, `sync`'d, rebooted.
+
+**Board came back up clean at the SAME IP it had before the reboot (`192.168.1.100`)** -- convenient but not guaranteed, still DHCP so don't assume this holds next time. Host key fingerprint verified unchanged (`SHA256:BNeiBArC949eFL23J+no8BfYq6rHikzDuaLiaiMuIzo`) before logging in, confirming it's genuinely the same board post-reboot. `uptime` showed ~2 min (fresh boot), `iio_info -s` shows all expected devices healthy against the new PL image (`ad9361-phy`, `cf-ad9361-dds-core-lpc`, `cf-ad9361-lpc`, `xadc`, `ad7291`), `dmesg` clean of any `mmcblk0` errors. **The new bitstream -- both real-hardware timing fixes (interpolator Stage 2b1/2b2, NCO two-stage split) plus the false-path fix, all under one genuinely fully-closed build -- is now live on the ZedBoard.**
+
+**Next: this is the moment to actually capture the payoff.** Pari can now open Vivado Hardware Manager (JTAG, same Digilent JTAG-SMT2 path used for every earlier ILA capture in this project), connect to the already-configured device (no need to re-program -- the FPGA fabric was configured from this exact `BOOT.BIN`'s bitstream at boot), and set up/run an ILA capture on `system_ila_0`. This is the first capture where `gmsk_step2b2_nco`'s `is_midpoint` tag should show a genuine interleaved ON,MID,ON,MID,... stream feeding `gmsk_step2d_gardner_ted` instead of the degenerate `is_midpoint=0`-only baseline every earlier capture in this project has been limited to -- the actual goal the whole mid-point-sample NCO architecture decision (sub-step B2) was built for.
+
 
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.
