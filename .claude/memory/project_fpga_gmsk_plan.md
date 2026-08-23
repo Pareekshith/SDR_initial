@@ -755,6 +755,18 @@ Pari asked to fix this autonomously overnight (sleep confirmed disabled first, g
 
 **Run-property changes made overnight, now persisted in the project (worth knowing for next session):** `impl_1`'s `STEPS.PLACE_DESIGN.ARGS.DIRECTIVE` is now `WLDrivenBlockPlacement` and `STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE` is `AggressiveExplore` (both explicit overrides on top of the still-unchanged `Congestion_SpreadLogic_high` strategy and the still-intact ATF post-route hook) -- confirmed these didn't regress anything: DRC/route status stayed clean across all three attempts, and the placement directive change was a pure improvement, not a tradeoff against something else breaking.
 
+## Seventh timing-bug instance fixed: Stage 2b split into 2b1/2b2 (2026-08-24)
+
+Resumed after a 7-day gap (both repos still clean/pushed, nothing lost) specifically to fix the one real violation left over from the overnight session above. Pari reviewed the finding and asked to go ahead with the RTL split.
+
+**Fix:** split `gmsk_step2a_interpolator`'s Stage 2b into **Stage 2b1** (computes `num_v1_2b1`/`num_v3_2b1`/`v0_2b1` unchanged, plus a NEW partial sum `partial_v2_2b1 = xm1_2a - x0x2_2a` and forwards `x1_fwd_2b1`) and **Stage 2b2** (forwards v1/v3/v0 unchanged, finishes v2's sum: `num_v2_2b = partial_v2_2b1 + x1_fwd_2b1`). Downstream (Stage 2c1 onward) needed zero changes -- `num_v1_2b`/`num_v2_2b`/`num_v3_2b`/`v0_2b`/`mu_2b`/`valid_2b` still mean exactly what they always did, just arrive one cycle later. Same recipe as every one of the six earlier timing-bug instances in this module: split the offending combinational add across two registered cycles.
+
+**Pipeline depth: 19 -> 20 registered stages** (confirmed by direct `always @(posedge aclk)` count before and after, not assumed). This has one real ripple effect: `gmsk_interp_tag_delay`'s `DELAY_CYCLES` parameter is SPECIFICALLY tied to the interpolator's measured latency (documented in that module's own header for exactly this reason) -- bumped its default from 19 to 20, updated its testbench's matching localparam, and re-ran its SIM gate (still PASSED, the fix doesn't touch that module's own logic, just the constant it's parametrized with).
+
+**SIM gates: both re-ran clean.** Interpolator: max deviation identical to before (607.0, unchanged), confirming this is purely a timing/pipelining change with zero functional difference -- same "re-verify after every pipeline-depth change" discipline every prior fix in this module used. Tag-delay: bit-exact across 500 cycles with `DELAY_CYCLES=20`.
+
+**Both IPs repackaged**, `DELAY_CYCLES=20` confirmed baked into the generated `component.xml` (not just source-level intent). Not yet re-wired into the block design / rebuilt -- that's the next step, needs Pari's go-ahead given the last several bitstream builds all needed real intervention.
+
 **Process note, worth remembering for next time a build needs driving:** this session's builds were run both via my own Vivado batch scripting (`run_in_background`, works well once the `upgrade_ip` gotcha above is known) and via Pari directly in the interactive GUI -- both are viable, but **the machine sleeping mid-build caused real, repeated multi-hour stalls** (Vivado freezes on wake rather than resuming) regardless of which approach was driving it. Worth disabling sleep before any build expected to run more than a few minutes unattended.
 
 ## Context for Win11/WSL setup

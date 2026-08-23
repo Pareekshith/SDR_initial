@@ -28,7 +28,7 @@
 //
 module tb_gmsk_interp_tag_delay;
 
-    localparam integer DELAY_CYCLES = 19;
+    localparam integer DELAY_CYCLES = 20;  // matches gmsk_step2a_interpolator's current pipeline depth (19->20 as of 2026-08-24, see gmsk_interp_tag_delay.v's header)
     localparam integer NUM_CYCLES   = 500;
 
     reg clk = 1'b0;

@@ -176,8 +176,60 @@ module gmsk_step2a_interpolator #
         end
     end
 
-    // ---- Stage 2b: sum into numerators (pure adds of pre-scaled/plain
-    // registered values, no multiplies) -- division not yet applied. ----
+    // ---- Stage 2b1: sum into numerators for v1/v3/v0 (pure adds of
+    // pre-scaled/plain registered values, no multiplies) -- unchanged from
+    // the original single-cycle Stage 2b. v2's own sum is now split across
+    // two registered cycles instead of computed here in one -- see Stage
+    // 2b2 immediately below for why.
+    reg signed [NUM_WIDTH-1:0] num_v1_2b1, num_v3_2b1, v0_2b1;
+    reg signed [NUM_WIDTH-1:0] partial_v2_2b1, x1_fwd_2b1;
+    (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2b1;
+    (* srl_style = "register" *) reg                valid_2b1;
+
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            num_v1_2b1     <= {NUM_WIDTH{1'b0}};
+            num_v3_2b1     <= {NUM_WIDTH{1'b0}};
+            v0_2b1         <= {NUM_WIDTH{1'b0}};
+            partial_v2_2b1 <= {NUM_WIDTH{1'b0}};
+            x1_fwd_2b1     <= {NUM_WIDTH{1'b0}};
+            mu_2b1    <= {MU_WIDTH{1'b0}};
+            valid_2b1 <= 1'b0;
+        end else begin
+            valid_2b1 <= valid_2a;
+            mu_2b1    <= mu_2a;
+            num_v1_2b1     <= -m1x2_2a - x0x3_2a + (x1x3_2a <<< 1) - x2_2a;  // -2xm1-3x0+6x1-x2
+            num_v3_2b1     <= -xm1_2a + x0x3_2a - x1x3_2a + x2_2a;            // -xm1+3x0-3x1+x2
+            v0_2b1         <= x0_2a;
+            partial_v2_2b1 <= xm1_2a - x0x2_2a;   // half of xm1-2x0+x1, finished in Stage 2b2
+            x1_fwd_2b1     <= x1_2a;
+        end
+    end
+
+    // ---- Stage 2b2: finish v2's sum (a cheap 2-term add, in its own
+    // registered cycle), forward v1/v3/v0 unchanged. Downstream (Stage 2c1
+    // onward) is untouched -- num_v1_2b/num_v2_2b/num_v3_2b/v0_2b/mu_2b/
+    // valid_2b still mean exactly what they always did, just arrive one
+    // cycle later now.
+    //
+    // Real-hardware bug found and fixed (2026-08-24), a SEVENTH instance of
+    // this module's recurring lesson: v2's numerator (xm1-2x0+x1, a 3-term
+    // NUM_WIDTH-wide add) was being computed combinationally in one cycle
+    // inside the original Stage 2b, alongside v1/v3's own sums -- and on
+    // the first real hardware build of the closed-loop chain (sub-step B2 +
+    // Gardner TED wired in), v2's was the one that actually violated timing
+    // (-0.035ns, 9 logic levels: 7 CARRY4 + 2 LUT), not v1/v3's own (even
+    // wider, 4-term) sums, which had enough margin. Not really about which
+    // expression looks more complex on paper -- came down to where these
+    // specific registers happened to land during placement on this
+    // particular build. Same "small constant arithmetic isn't free at this
+    // clock rate" lesson this module has hit six times before (see the
+    // comments above and on the Horner stages below), just surfacing on a
+    // sum that had never been the worst path until now. Fix: same recipe
+    // as every earlier instance -- split the add across two registered
+    // cycles. Costs one more cycle of total latency (19->20) -- irrelevant
+    // to this fixed-rate streaming block, but DOES require bumping
+    // gmsk_interp_tag_delay's DELAY_CYCLES to match (see that module).
     reg signed [NUM_WIDTH-1:0] num_v1_2b, num_v2_2b, num_v3_2b, v0_2b;
     (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2b;
     (* srl_style = "register" *) reg                valid_2b;
@@ -191,12 +243,12 @@ module gmsk_step2a_interpolator #
             mu_2b    <= {MU_WIDTH{1'b0}};
             valid_2b <= 1'b0;
         end else begin
-            valid_2b <= valid_2a;
-            mu_2b    <= mu_2a;
-            num_v1_2b <= -m1x2_2a - x0x3_2a + (x1x3_2a <<< 1) - x2_2a;  // -2xm1-3x0+6x1-x2
-            num_v2_2b <= xm1_2a - x0x2_2a + x1_2a;                       // xm1-2x0+x1
-            num_v3_2b <= -xm1_2a + x0x3_2a - x1x3_2a + x2_2a;            // -xm1+3x0-3x1+x2
-            v0_2b     <= x0_2a;
+            valid_2b <= valid_2b1;
+            mu_2b    <= mu_2b1;
+            num_v1_2b <= num_v1_2b1;
+            num_v3_2b <= num_v3_2b1;
+            v0_2b     <= v0_2b1;
+            num_v2_2b <= partial_v2_2b1 + x1_fwd_2b1;   // finishes xm1-2x0+x1
         end
     end
 

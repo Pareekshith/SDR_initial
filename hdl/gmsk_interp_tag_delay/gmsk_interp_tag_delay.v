@@ -6,19 +6,22 @@
 //
 // The problem: gmsk_step2b2_nco computes strobe/is_midpoint/mu_out on the
 // SAME cycle it feeds mu_in to the interpolator. But the interpolator
-// itself is a 19-stage registered pipeline (confirmed by direct count of
+// itself is a registered pipeline (confirmed by direct count of
 // `always @(posedge aclk)` blocks in gmsk_step2a_interpolator.v -- verify
 // that count again if this module's own DELAY_CYCLES parameter is ever
-// suspected stale, e.g. after a future edit to the interpolator) -- it
-// takes 19 cycles for that mu_in to actually produce the corresponding
-// m_axis_tdata. Feeding the TED today's is_midpoint tag alongside
-// whatever the interpolator happens to output THIS cycle would silently
-// pair the wrong tag with the wrong sample -- not a crash, just quietly
-// wrong data.
+// suspected stale, e.g. after a future edit to the interpolator; it went
+// 19->20 on 2026-08-24 when that module's Stage 2b got split into 2b1/2b2
+// to fix a real timing violation, see that module's own header comment)
+// -- it takes that many cycles for a given mu_in to actually produce the
+// corresponding m_axis_tdata. Feeding the TED today's is_midpoint tag
+// alongside whatever the interpolator happens to output THIS cycle would
+// silently pair the wrong tag with the wrong sample -- not a crash, just
+// quietly wrong data.
 //
-// The fix is purely mechanical: delay strobe/is_midpoint by the SAME 19
-// cycles, so they land on the exact cycle the interpolator's own matching
-// output does. Safe to do with a plain, unconditionally-shifting register
+// The fix is purely mechanical: delay strobe/is_midpoint by the SAME
+// number of cycles, so they land on the exact cycle the interpolator's
+// own matching output does. Safe to do with a plain, unconditionally-
+// shifting register
 // (not gated by any valid/enable signal) because the interpolator's own
 // pipeline was confirmed to behave the same way -- every stage updates
 // every clock cycle regardless of gaps in the real sample-valid signal,
@@ -35,7 +38,7 @@
 //
 module gmsk_interp_tag_delay #
 (
-    parameter integer DELAY_CYCLES = 19  // matches gmsk_step2a_interpolator's CURRENT pipeline depth -- see header
+    parameter integer DELAY_CYCLES = 20  // matches gmsk_step2a_interpolator's CURRENT pipeline depth -- see header
 )
 (
     input  wire aclk,
