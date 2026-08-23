@@ -845,6 +845,20 @@ Before RTL, wrote `docs/step2e_loop_filter.html` (same house style as the other 
 
 **Not yet wired into hardware** -- standalone sub-step, same status every earlier sub-step had at this point. Sub-step F is now genuinely just wiring: this module's `adj_out` into `gmsk_step2b2_nco`'s already-present `adj_in` port, which has been threaded through and precondition-documented since sub-step B was originally built specifically for this moment.
 
+## Sub-step F: loop closed for real -- Pari wired it via the GUI, verified correct (2026-08-23)
+
+Gave Pari an exact wiring list (traced live from `system.bd`, not from memory) rather than doing the rewiring myself this time -- Pari did it directly in the Vivado GUI. Verified afterward with the same rigor every prior rewiring review in this project has used: read the regenerated `system.bd` JSON directly (not the GUI), confirmed every net membership individually, then ran an actual `validate_bd_design` pass rather than stopping at the static read.
+
+**Instance**: `gmsk_step2e_loop_fil_0` (Vivado's usual name-truncation, cosmetic -- same pattern as `gmsk_step2d_gardner_0`). `CONFIG.*` confirmed to be exactly the SIM-gate-verified production defaults (`KP_INT=1/KP_SHIFT=2/KI_INT=1/KI_SHIFT=2/IN_WIDTH=32/OUT_WIDTH=32/GAIN_WIDTH=18/LOBITS=16/GUARD_BITS=16`), not the saturation-stress DUT's parameters -- the right instance for real use.
+
+**Wiring, all confirmed correct**: `aclk`/`aresetn` joined the same shared `axi_ad9361_l_clk`/`util_vector_logic_0/Res` nets every other module in this chain uses. `s_axis_tvalid`/`s_axis_tdata` tap `gmsk_step2d_gardner_0/m_axis_t{valid,data}` as a THIRD fan-out consumer, alongside the existing `system_ila_0` probe6/probe7 taps (left untouched). `adj_out` -> `gmsk_step2b2_nco_0/adj_in` -- **the actual loop-closing connection**, replacing the old `xlconstant_2` (tie-to-0) source.
+
+**One deviation from this project's own "disconnect, don't delete" convention for orphaned nets, worth recording**: `xlconstant_2` wasn't left in place disconnected (the pattern `xlslice_0` followed when the interpolator's `mu_in` got rewired off `SCRATCH`) -- it was deleted outright. Confirmed via JSON search that nothing else references it, so this isn't a functional problem, just a documented deviation in case a future open-loop baseline test wants that constant back (would need re-adding, not just reconnecting).
+
+**`validate_bd_design`: clean.** Only the two pre-existing benign warnings already documented in this file (SPI EMIO SSIN note, `clk_wiz` propagate INFO) -- nothing naming `gmsk_step2e_loop_fil_0` or any of the rewired nets.
+
+**The timing-recovery loop is now genuinely, fully closed for the first time in this project**: NCO -> interpolator -> Gardner TED -> loop filter -> back into the NCO's `adj_in`. Every sub-step (A, B2, D, E) is wired together. Not yet rebuilt/redeployed -- that's the natural next step, needs a fresh `reset_run synth_1` (real RTL/wiring change) and the usual full build+deploy+ILA-capture cycle before this can be called hardware-validated.
+
 
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.
