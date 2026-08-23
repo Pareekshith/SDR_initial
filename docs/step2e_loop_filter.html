@@ -1,0 +1,604 @@
+<title>Step 2e — The Loop Filter</title>
+<style>
+  :root {
+    --paper: #F2F3EE;
+    --ink: #1B211F;
+    --muted: #6B7269;
+    --border: #CBD0C4;
+    --card-bg: #FDFDFB;
+    --copper: #A85A26;
+    --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC;
+    --teal: #2E8F87;
+    --teal-soft: #CFE7E4;
+    --teal-line: #2E8F87;
+    --violet: #6E59A8;
+    --violet-soft: #E4DEF2;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131715; --ink: #E7EBE5; --muted: #8D9690; --border: #2B322E;
+      --card-bg: #1A201D; --copper: #DE9257; --copper-strong: #F0AE7A;
+      --copper-soft: #3A2A1C; --teal: #56C6BB; --teal-soft: #16302C; --teal-line: #56C6BB;
+      --violet: #A796D6; --violet-soft: #2A2440;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131715; --ink: #E7EBE5; --muted: #8D9690; --border: #2B322E;
+    --card-bg: #1A201D; --copper: #DE9257; --copper-strong: #F0AE7A;
+    --copper-soft: #3A2A1C; --teal: #56C6BB; --teal-soft: #16302C; --teal-line: #56C6BB;
+    --violet: #A796D6; --violet-soft: #2A2440;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F2F3EE; --ink: #1B211F; --muted: #6B7269; --border: #CBD0C4;
+    --card-bg: #FDFDFB; --copper: #A85A26; --copper-strong: #8A4A1E;
+    --copper-soft: #EBD3BC; --teal: #2E8F87; --teal-soft: #CFE7E4; --teal-line: #2E8F87;
+    --violet: #6E59A8; --violet-soft: #E4DEF2;
+    --shadow: 0 1px 2px rgba(20,25,20,0.06), 0 4px 14px rgba(20,25,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 56px 28px 100px; }
+
+  .eyebrow {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-weight: 700; font-size: clamp(26px, 4.2vw, 36px);
+    letter-spacing: -0.01em; text-wrap: balance; margin: 0 0 10px;
+  }
+  .subtitle { font-size: 17px; color: var(--muted); max-width: 58ch; margin: 0 0 40px; }
+
+  h2 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--copper-strong); font-weight: 700;
+    margin: 48px 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  section:first-of-type h2 { margin-top: 0; }
+  h3 {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 15px; color: var(--ink); margin: 26px 0 10px;
+  }
+  p { max-width: 64ch; font-size: 16.5px; margin: 0 0 16px; }
+  .max-none { max-width: none; }
+  strong { color: var(--copper-strong); font-weight: 700; }
+  em { color: var(--ink); }
+  code {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 0.88em; background: var(--teal-soft); color: var(--teal);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  a { color: var(--teal); }
+
+  .callout {
+    background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--teal);
+    border-radius: 8px; padding: 16px 20px; margin: 0 0 20px; box-shadow: var(--shadow);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .k {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--teal); font-weight: 700; margin: 0 0 6px;
+  }
+  .callout.copper { border-left-color: var(--copper); }
+  .callout.copper .k { color: var(--copper-strong); }
+
+  .eq {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; margin: 0 0 20px; font-size: 15px; overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .eq .line { margin: 4px 0; white-space: pre; }
+  .eq .comment { color: var(--muted); font-style: italic; }
+
+  .diagram {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    margin: 8px 0 8px; padding: 26px 20px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto; justify-content: center;
+  }
+  .dblock {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 12.5px; text-align: center; padding: 12px 14px; border-radius: 8px;
+    border: 1.5px solid var(--border); background: var(--paper); color: var(--ink);
+    flex: none; line-height: 1.35; min-width: 92px;
+  }
+  .dblock.accent { border-color: var(--teal); color: var(--teal); }
+  .dblock.out { border-color: var(--copper); color: var(--copper-strong); }
+  .dblock.dim { border-color: var(--violet); color: var(--violet); border-style: dashed; }
+  .darrow { flex: none; color: var(--muted); padding: 0 6px; font-size: 16px; }
+  .dgroup { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+  .dgroup .caption { font-size: 10px; color: var(--muted); font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; letter-spacing: 0.04em; }
+  .dcol { display: flex; flex-direction: column; gap: 8px; flex: none; }
+
+  .loopdiagram, .svgdiagram {
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+    gap: 0; margin: 8px 0 8px; padding: 22px 16px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+  .svgdiagram svg { max-width: 100%; height: auto; }
+  .svgnode-label {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 12.5px;
+  }
+  .svgcaption-label {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 10px; letter-spacing: 0.03em;
+  }
+  .svgsig-label {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 11px;
+  }
+
+  figure { margin: 0 0 8px; }
+  figcaption {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; margin-top: 10px;
+  }
+
+  ul.notes { padding-left: 20px; margin: 0 0 20px; }
+  ul.notes li { font-size: 15.5px; margin-bottom: 10px; max-width: 60ch; }
+  ul.notes li::marker { color: var(--copper); }
+
+  .tbl-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 420px; }
+  thead th {
+    font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    text-align: left; color: var(--muted); background: var(--card-bg);
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: top; background: var(--card-bg); font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace; font-size: 13.5px; }
+  tbody td:first-child { font-family: Georgia, serif; font-size: 14.5px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.final td { font-weight: 700; color: var(--copper-strong); }
+
+  .demo {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px 22px 18px; margin: 8px 0 8px; box-shadow: var(--shadow);
+  }
+  .demo canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: var(--paper); border: 1px solid var(--border); }
+  .demo-controls { display: flex; align-items: center; gap: 14px; margin: 14px 0 0; flex-wrap: wrap; }
+  .demo-controls label { font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; font-size: 12.5px; color: var(--muted); letter-spacing: 0.04em; min-width: 118px; }
+  .demo-controls input[type=range] { flex: 1; min-width: 140px; accent-color: var(--teal); }
+  .demo-readout {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    font-size: 13px; color: var(--teal); min-width: 66px; text-align: right;
+  }
+  .demo-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; font-family: "Bahnschrift", "Roboto Condensed", "Arial Narrow", sans-serif; color: var(--muted); }
+  .demo-legend span.sw { display: inline-block; width: 18px; height: 3px; margin-right: 6px; vertical-align: middle; border-radius: 2px; }
+  .demo-verdict { font-family: "Bahnschrift","Roboto Condensed",sans-serif; font-weight: 700; font-size: 13px; margin-top: 12px; text-align: center; }
+  .demo-sep { border: none; border-top: 1px dashed var(--border); margin: 18px 0; }
+
+  footer { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 480px) {
+    .wrap { padding: 36px 18px 72px; }
+    .diagram, .loopdiagram, .svgdiagram { padding: 16px 10px; }
+    .demo { padding: 16px 14px; }
+    .demo-controls label { min-width: 100%; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Step 2e &middot; Technical Note</p>
+  <h1>The Loop Filter</h1>
+  <p class="subtitle">The Gardner detector can tell you, once per symbol, whether the sampling instant was early, late, or about right. On its own that number does nothing &mdash; nothing in the receiver ever reads it. This is the piece that reads it, and turns it into a correction the NCO actually acts on.</p>
+
+  <section>
+    <h2>What's still missing</h2>
+    <p>After sub-steps A, B2 and D, the loop <em>looks</em> closed but isn't. The NCO drives the interpolator's <code>mu_in</code>, the interpolator's output feeds the TED, the TED produces <code>e[n]</code> &mdash; and then <code>e[n]</code> goes nowhere. The NCO's own <code>step_in</code>/<code>adj_in</code> ports are still just tied to a fixed constant. Every real hardware capture so far has confirmed exactly this: <code>mu_out</code> sits flat at <code>0</code>, because the accumulator is running open-loop at a perfectly nominal, unchanging rate &mdash; nothing is telling it to do otherwise, even when <code>e[n]</code> is genuinely nonzero.</p>
+    <p>In real hardware, the transmitter's and receiver's clocks are two independent crystal oscillators. They are <strong>never</strong> exactly the same rate, and the starting phase between them is unknown. Left uncorrected, that mismatch doesn't stay small &mdash; it accumulates, symbol after symbol, until the sampling grid has drifted far enough that the interpolator is reading garbage. Sub-step E is the piece that closes this: it watches <code>e[n]</code> and continuously nudges the NCO to keep the sampling grid locked to the transmitter's actual symbol rate, indefinitely.</p>
+  </section>
+
+  <section>
+    <h2>Why not just a low-pass filter?</h2>
+    <p><code>e[n]</code> is noisy &mdash; it jitters symbol to symbol even when the loop is well-locked, because real samples carry noise and the S-curve itself isn't perfectly linear away from lock. So yes, whatever reads <code>e[n]</code> needs to smooth it, which does sound like &ldquo;low-pass filter.&rdquo; But a plain single-pole smoother (a pure running average, or a leaky integrator alone) has a specific, disqualifying weakness: it can only produce a nonzero output while it's still <em>receiving</em> a nonzero input. Feed it a genuine, constant clock-rate offset &mdash; exactly the situation every real pair of independent oscillators is in &mdash; and a plain low-pass settles to an output that's proportional to whatever residual error is left over, never fully cancelling it. The loop would track, but with a permanent, uncorrected timing bias baked in.</p>
+    <p>What actually gets used, here and in essentially every symbol-timing and carrier-recovery loop in the literature (Gardner's own papers included), is a <strong>proportional-plus-integrator (PI) filter</strong> &mdash; two parallel paths, summed:</p>
+    <div class="eq">
+      <div class="line">adj_in[n]        =  Kp&middot;e[n]  +  integrator[n]</div>
+      <div class="line">integrator[n+1]  =  integrator[n]  +  Ki&middot;e[n]</div>
+    </div>
+    <ul class="notes">
+      <li><strong>Proportional term</strong> (<code>Kp&middot;e[n]</code>) &mdash; reacts immediately to whatever the error is <em>right now</em>. Fast, but memoryless: the moment <code>e[n]</code> goes back to zero, this term contributes nothing, regardless of what's still wrong.</li>
+      <li><strong>Integral term</strong> (the running accumulator) &mdash; remembers. It keeps summing every past error, so it can settle at whatever constant, nonzero value happens to exactly cancel a constant clock-rate offset &mdash; and then <em>hold</em> that value indefinitely, even once <code>e[n]</code> has been driven all the way back to zero. This is the term that gives the loop zero steady-state error against a genuine frequency offset, which a proportional-only (or low-pass-only) filter structurally cannot do.</li>
+    </ul>
+    <div class="callout">
+      <p class="k">In one line</p>
+      <p>A low-pass filter smooths noise but can't hold a persistent correction. An integrator holds a persistent correction but reacts sluggishly on its own. A PI filter is both at once &mdash; the proportional term for a fast initial response, the integral term for the zero-error lock a constant clock-rate mismatch demands.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Inside the filter</h2>
+    <figure>
+      <div class="svgdiagram">
+        <svg viewBox="0 0 640 220" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrE" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="var(--muted)"></path>
+            </marker>
+          </defs>
+          <!-- e[n] input -->
+          <text x="14" y="115" class="svgsig-label" fill="var(--ink)">e[n]</text>
+          <line x1="40" y1="110" x2="80" y2="110" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <!-- split node -->
+          <circle cx="86" cy="110" r="4" fill="var(--muted)"></circle>
+          <line x1="86" y1="110" x2="86" y2="60" stroke="var(--muted)" stroke-width="1.5"></line>
+          <line x1="86" y1="110" x2="86" y2="160" stroke="var(--muted)" stroke-width="1.5"></line>
+          <!-- top path: Kp -->
+          <line x1="86" y1="60" x2="150" y2="60" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <rect x="150" y="42" width="70" height="36" rx="7" fill="var(--paper)" stroke="var(--teal)" stroke-width="1.5"></rect>
+          <text x="185" y="65" text-anchor="middle" class="svgnode-label" fill="var(--teal)">&times; Kp</text>
+          <line x1="220" y1="60" x2="330" y2="60" stroke="var(--muted)" stroke-width="1.5"></line>
+          <line x1="330" y1="60" x2="330" y2="102" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <!-- bottom path: Ki -->
+          <line x1="86" y1="160" x2="150" y2="160" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <rect x="150" y="142" width="70" height="36" rx="7" fill="var(--paper)" stroke="var(--copper)" stroke-width="1.5"></rect>
+          <text x="185" y="165" text-anchor="middle" class="svgnode-label" fill="var(--copper-strong)">&times; Ki</text>
+          <line x1="220" y1="160" x2="255" y2="160" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <!-- accumulator box with z^-1 feedback -->
+          <rect x="255" y="142" width="80" height="36" rx="7" fill="var(--paper)" stroke="var(--copper)" stroke-width="1.5"></rect>
+          <text x="295" y="160" text-anchor="middle" class="svgnode-label" fill="var(--copper-strong)">&#931;</text>
+          <text x="295" y="172" text-anchor="middle" class="svgcaption-label" fill="var(--muted)">accumulator</text>
+          <path d="M 335 150 C 360 150, 360 190, 295 190 C 260 190, 255 178, 255 172" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrE)"></path>
+          <text x="308" y="205" class="svgcaption-label" fill="var(--muted)">z&#8315;&#185; (holds value)</text>
+          <line x1="335" y1="160" x2="330" y2="118" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <!-- sum node -->
+          <circle cx="330" cy="110" r="14" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.5"></circle>
+          <text x="330" y="115" text-anchor="middle" class="svgnode-label" fill="var(--ink)">+</text>
+          <!-- output -->
+          <line x1="344" y1="110" x2="420" y2="110" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrE)"></line>
+          <text x="426" y="115" class="svgsig-label" fill="var(--copper-strong)">adj_in[n]</text>
+        </svg>
+      </div>
+      <figcaption>The proportional path (top) responds to <code>e[n]</code> instantly. The integral path (bottom) accumulates <code>Ki&middot;e[n]</code> into a running sum that persists across symbols &mdash; the <code>z<sup>&minus;1</sup></code> feedback is what makes it a genuine accumulator rather than another instantaneous multiply. The two paths sum into <code>adj_in[n]</code>, the NCO's correction for that symbol.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Closing the loop</h2>
+    <figure>
+      <div class="svgdiagram">
+        <svg viewBox="0 0 520 420" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrL" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="var(--muted)"></path>
+            </marker>
+          </defs>
+          <!-- nodes: NCO top-left, Interpolator top-right, TED bottom-right, Loop Filter bottom-left -->
+          <rect x="40"  y="30"  width="140" height="60" rx="9" fill="var(--paper)" stroke="var(--teal)" stroke-width="1.5"></rect>
+          <text x="110" y="55" text-anchor="middle" class="svgnode-label" fill="var(--teal)">gmsk_step2b2</text>
+          <text x="110" y="72" text-anchor="middle" class="svgnode-label" fill="var(--teal)">NCO</text>
+
+          <rect x="340" y="30"  width="140" height="60" rx="9" fill="var(--paper)" stroke="var(--teal)" stroke-width="1.5"></rect>
+          <text x="410" y="55" text-anchor="middle" class="svgnode-label" fill="var(--teal)">gmsk_step2a</text>
+          <text x="410" y="72" text-anchor="middle" class="svgnode-label" fill="var(--teal)">interpolator</text>
+
+          <rect x="340" y="330" width="140" height="60" rx="9" fill="var(--paper)" stroke="var(--teal)" stroke-width="1.5"></rect>
+          <text x="410" y="355" text-anchor="middle" class="svgnode-label" fill="var(--teal)">gmsk_step2d</text>
+          <text x="410" y="372" text-anchor="middle" class="svgnode-label" fill="var(--teal)">Gardner TED</text>
+
+          <rect x="40"  y="330" width="140" height="60" rx="9" fill="var(--paper)" stroke="var(--copper)" stroke-width="1.5"></rect>
+          <text x="110" y="355" text-anchor="middle" class="svgnode-label" fill="var(--copper-strong)">loop filter</text>
+          <text x="110" y="372" text-anchor="middle" class="svgnode-label" fill="var(--copper-strong)">(this page)</text>
+
+          <!-- NCO -> interpolator : mu_out -->
+          <line x1="180" y1="60" x2="332" y2="60" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrL)"></line>
+          <text x="256" y="50" text-anchor="middle" class="svgsig-label" fill="var(--ink)">mu_out</text>
+
+          <!-- interpolator -> TED : y_on / y_mid samples (right side, down) -->
+          <line x1="410" y1="90" x2="410" y2="328" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrL)"></line>
+          <text x="416" y="215" class="svgsig-label" fill="var(--ink)">y_on, y_mid</text>
+          <text x="416" y="230" class="svgsig-label" fill="var(--muted)">(tag-delay aligned)</text>
+
+          <!-- TED -> loop filter : e[n] (bottom, right to left) -->
+          <line x1="340" y1="360" x2="182" y2="360" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrL)"></line>
+          <text x="260" y="350" text-anchor="middle" class="svgsig-label" fill="var(--ink)">e[n]</text>
+
+          <!-- loop filter -> NCO : adj_in (left side, up) -->
+          <line x1="110" y1="330" x2="110" y2="92" stroke="var(--copper)" stroke-width="1.8" marker-end="url(#arrL)"></line>
+          <text x="30" y="215" class="svgsig-label" fill="var(--copper-strong)">adj_in</text>
+
+          <!-- NCO also -> strobe/is_midpoint down to TED via tag-delay, small side note -->
+          <text x="110" y="115" text-anchor="middle" class="svgcaption-label" fill="var(--muted)">(strobe / is_midpoint also</text>
+          <text x="110" y="128" text-anchor="middle" class="svgcaption-label" fill="var(--muted)">feed the TED, via gmsk_interp_tag_delay,</text>
+          <text x="110" y="141" text-anchor="middle" class="svgcaption-label" fill="var(--muted)">not drawn to keep this diagram simple)</text>
+        </svg>
+      </div>
+      <figcaption>The full ring, clockwise from the NCO: <code>mu_out</code> tells the interpolator what to evaluate; the resulting on-time/mid-point samples go to the TED; the TED's <code>e[n]</code> goes to the loop filter; the loop filter's <code>adj_in</code> goes back into the NCO's own accumulator step. Every arrow in this diagram is already wired and hardware-validated except the copper one &mdash; <code>adj_in</code> is the one connection sub-step E exists to build.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Choosing the gains: bandwidth and damping</h2>
+    <p>Rather than picking <code>Kp</code>/<code>Ki</code> directly, the standard approach (Gardner 1986; also the standard second-order digital-PLL derivation used for essentially any symbol-timing or carrier loop) is to pick two much more intuitive design parameters and derive the gains from them:</p>
+    <ul class="notes">
+      <li><strong>Normalized loop bandwidth, B<sub>n</sub>T</strong> &mdash; how wide a &ldquo;window&rdquo; of frequencies the loop responds to, relative to the symbol rate. Small (0.005&ndash;0.02) means slow, smooth tracking that rejects noise well but takes longer to acquire lock. Larger (0.03&ndash;0.08) means faster acquisition but a noisier, more jittery locked state. This is the acquisition-speed/tracking-noise tradeoff, and it's a genuine tradeoff &mdash; there's no value that's simply &ldquo;better,&rdquo; only better for a given scenario.</li>
+      <li><strong>Damping factor, &zeta;</strong> &mdash; how the loop approaches lock: under-damped (&zeta;&lt;1) overshoots and rings before settling, over-damped (&zeta;&gt;1) approaches slowly without overshoot. <strong>&zeta;=1/&radic;2&nbsp;&asymp;&nbsp;0.707</strong> is the conventional default (same &ldquo;maximally flat&rdquo; choice used in analog Butterworth filter design) &mdash; a good compromise, not a hard requirement.</li>
+    </ul>
+    <p>Given B<sub>n</sub>T and &zeta;, plus the combined gain of everything already inside the loop (the TED's own detector gain K<sub>d</sub> &mdash; the slope of the Gardner S-curve at &epsilon;=0, the same S-curve plotted on the <a href="step2d_gardner_ted.html">Step 2d page</a> &mdash; and the NCO's gain K<sub>0</sub>, effectively 1 here since <code>adj_in</code> feeds the accumulator step directly), the standard result is:</p>
+    <div class="eq">
+      <div class="line">&theta;n = B<sub>n</sub>T / (&zeta; + 1/(4&zeta;))</div>
+      <div class="line"></div>
+      <div class="line">Kp = 4&zeta;&middot;&theta;n / [(1 + 2&zeta;&middot;&theta;n + &theta;n&sup2;) &middot; K<sub>d</sub>K<sub>0</sub>]</div>
+      <div class="line">Ki = 4&middot;&theta;n&sup2; / [(1 + 2&zeta;&middot;&theta;n + &theta;n&sup2;) &middot; K<sub>d</sub>K<sub>0</sub>]</div>
+    </div>
+    <div class="callout copper">
+      <p class="k">Worth being upfront about</p>
+      <p>This is the standard textbook shape of the answer, not this project's final tuned numbers &mdash; K<sub>d</sub> in particular depends on real signal amplitude and pulse shape, which we can estimate from the S-curve slope but will ultimately want to sanity-check against real hardware captures, the same way every other sub-step's constants in this project got validated against real silicon rather than trusted from a formula alone. Treat the numbers below as illustrative starting points for the interactive demo and the worked example, worth revisiting once real RTL exists.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Try it: watch the loop acquire lock</h2>
+    <div class="demo">
+      <canvas id="acqCanvas" width="720" height="260"></canvas>
+      <div class="demo-legend">
+        <span><span class="sw" style="background:var(--teal)"></span>PI loop (proportional + integral)</span>
+        <span><span class="sw" style="background:var(--copper)"></span>proportional-only, same Kp, for comparison</span>
+      </div>
+      <div class="demo-controls">
+        <label for="bnSlider">bandwidth B<sub>n</sub>T</label>
+        <input type="range" id="bnSlider" min="5" max="80" step="1" value="25">
+        <span class="demo-readout" id="bnReadout">0.025</span>
+      </div>
+      <div class="demo-controls">
+        <label for="zetaSlider">damping &zeta;</label>
+        <input type="range" id="zetaSlider" min="30" max="150" step="1" value="71">
+        <span class="demo-readout" id="zetaReadout">0.71</span>
+      </div>
+      <div class="demo-controls">
+        <label for="offsetSlider">clock offset &delta;</label>
+        <input type="range" id="offsetSlider" min="0" max="30" step="1" value="12">
+        <span class="demo-readout" id="offsetReadout">0.0040T/sym</span>
+      </div>
+      <div class="demo-verdict" id="acqVerdict"></div>
+      <hr class="demo-sep">
+      <p style="margin: 0; font-size: 13.5px; color: var(--muted); max-width: none;">This simulates a genuine, permanent clock-rate mismatch &delta; between transmitter and receiver &mdash; a constant timing drift injected every symbol &mdash; using the same Gardner S-curve model from the <a href="step2d_gardner_ted.html">Step 2d page</a> as the detector. Watch what happens to the copper (proportional-only) trace as &delta; increases: it settles to a nonzero steady-state error and stays there, exactly the limitation described above. The teal (PI) trace, given enough time, always settles back to zero &mdash; the integrator finds and holds whatever correction cancels &delta;, no matter how small B<sub>n</sub>T is (though a smaller B<sub>n</sub>T takes longer to get there, watch the acquisition time change as you drag the slider).</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Worked example, by hand</h2>
+    <p>Illustrative numbers only (see callout above) &mdash; <code>B<sub>n</sub>T=0.02</code>, <code>&zeta;=0.707</code>, <code>K<sub>d</sub>K<sub>0</sub>=1</code> gives roughly <code>Kp&asymp;0.132</code>, <code>Ki&asymp;0.0018</code> from the formulas above. One symbol, starting from <code>integrator=1000</code> (some accumulated history) and a fresh <code>e[n]=1536</code> arriving from the TED:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Computation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>proportional term</td><td>Kp &times; e[n] = 0.132 &times; 1536</td><td>202.75</td></tr>
+          <tr><td>adj_in[n]</td><td>proportional term + integrator[n] = 202.75 + 1000</td><td class="final">1202.75</td></tr>
+          <tr><td>Ki &times; e[n]</td><td>0.0018 &times; 1536</td><td>2.76</td></tr>
+          <tr><td>integrator[n+1]</td><td>integrator[n] + (Ki &times; e[n]) = 1000 + 2.76</td><td>1002.76</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Notice the shape of it: the proportional term dominates this symbol's output (202.75 out of 1202.75), but the integrator barely moved (1000&rarr;1002.76) &mdash; that's expected and correct. The integrator is supposed to move slowly, accumulating the small residual bias left behind after the proportional term has done its faster, coarser correction, which is exactly what lets it eventually converge on the one constant value that exactly cancels a real clock-rate offset.</p>
+  </section>
+
+  <footer>
+    Step 2a answers &ldquo;what's the value at &mu;?&rdquo; Step 2b2 decides when to ask, at two points per symbol. Step 2d measures whether that choice was right. This page is what acts on that measurement. Once this exists as real RTL, sub-step F is just wiring: this page's <code>adj_in</code> output into <code>gmsk_step2b2_nco</code>'s already-present <code>adj_in</code> port &mdash; and the loop is genuinely, finally closed.
+  </footer>
+</div>
+
+<script>
+(function () {
+  // ---- shared S-curve model, mirrors step2d_gardner_ted.html / hdl/gmsk_step2d_gardner_ted/sim/gen_test_vectors.py ----
+  const T = 1.0;
+  const BT_LIKE = 0.4;
+  const SIGMA = T / (2 * Math.PI * BT_LIKE);
+  const SUM_HALF_WIDTH = 8;
+  const K_REF = 12;
+
+  function nrz(k) { return (k % 2 === 0) ? 1.0 : -1.0; }
+  function y(t, kCenter) {
+    let total = 0;
+    for (let k = kCenter - SUM_HALF_WIDTH; k <= kCenter + SUM_HALF_WIDTH; k++) {
+      const dt = t - k * T;
+      total += nrz(k) * Math.exp(-(dt * dt) / (2 * SIGMA * SIGMA));
+    }
+    return total;
+  }
+  function gardnerErr(eps) {
+    const yPrev = y((K_REF - 1) * T + eps * T, K_REF - 1);
+    const yMid  = y((K_REF - 0.5) * T + eps * T, K_REF);
+    const yOn   = y(K_REF * T + eps * T, K_REF);
+    return (yOn - yPrev) * yMid;
+  }
+  // Precompute a normalizer so the S-curve's near-origin slope is O(1) --
+  // keeps the demo's Kp/Ki in the same friendly numeric range as the
+  // worked-example table above, independent of the arbitrary pulse-shape
+  // amplitude the shared model happens to produce.
+  const KD = (gardnerErr(0.02) - gardnerErr(-0.02)) / 0.04;
+
+  // ---- theme handling ----
+  function isDark() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function colors() {
+    return isDark()
+      ? { ink: '#E7EBE5', muted: '#8D9690', border: '#2B322E', teal: '#56C6BB', copper: '#F0AE7A', paper: '#131715', card: '#1A201D' }
+      : { ink: '#1B211F', muted: '#6B7269', border: '#CBD0C4', teal: '#2E8F87', copper: '#8A4A1E', paper: '#F2F3EE', card: '#FDFDFB' };
+  }
+
+  const canvas = document.getElementById('acqCanvas');
+  const ctx = canvas.getContext('2d');
+  const bnSlider = document.getElementById('bnSlider');
+  const zetaSlider = document.getElementById('zetaSlider');
+  const offsetSlider = document.getElementById('offsetSlider');
+  const bnReadout = document.getElementById('bnReadout');
+  const zetaReadout = document.getElementById('zetaReadout');
+  const offsetReadout = document.getElementById('offsetReadout');
+  const verdictEl = document.getElementById('acqVerdict');
+
+  const N_SYMBOLS = 550;
+
+  function gains(bnT, zeta) {
+    const thetan = bnT / (zeta + 1 / (4 * zeta));
+    const denom = (1 + 2 * zeta * thetan + thetan * thetan) * KD;
+    const Kp = (4 * zeta * thetan) / denom;
+    const Ki = (4 * thetan * thetan) / denom;
+    return { Kp, Ki };
+  }
+
+  // Simulate: theta[n] is the actual timing phase offset (units of T).
+  // Each symbol: e[n] = gardnerErr(theta[n]) (clipped to the S-curve's
+  // well-behaved range), adj[n] = Kp*e[n] + integrator, integrator +=
+  // Ki*e[n], theta[n+1] = theta[n] + delta - adj[n]*NCO_GAIN. NCO_GAIN=1
+  // matches K0=1 exactly as the text above claims (adj_in feeds the
+  // accumulator step directly) -- the Kp/Ki formulas already divide
+  // through by KD once, so this must NOT be re-scaled by KD again here
+  // (an earlier draft of this demo did exactly that, which silently
+  // made every correction ~200x too weak and made the loop diverge
+  // instead of lock -- verified against a standalone Python re-simulation
+  // before trusting this fix, same discipline as every RTL fix in this
+  // project).
+  const NCO_GAIN = 1;
+  function simulate(bnT, zeta, delta, piMode) {
+    const { Kp, Ki } = gains(bnT, zeta);
+    let theta = 0.0;
+    let integrator = 0.0;
+    const out = [];
+    for (let n = 0; n < N_SYMBOLS; n++) {
+      const epsClamped = Math.max(-0.45, Math.min(0.45, theta));
+      const e = gardnerErr(epsClamped);
+      const adj = piMode ? (Kp * e + integrator) : (Kp * e);
+      if (piMode) integrator += Ki * e;
+      out.push(theta);
+      theta = theta + delta - adj * NCO_GAIN;
+    }
+    return out;
+  }
+
+  function drawAxes(col, marginL, marginR, marginT, marginB, W, H) {
+    ctx.strokeStyle = col.border;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(marginL, H - marginB);
+    ctx.lineTo(W - marginR, H - marginB);
+    ctx.stroke();
+  }
+
+  function render() {
+    const col = colors();
+    const bnT = parseInt(bnSlider.value, 10) / 1000;
+    const zeta = parseInt(zetaSlider.value, 10) / 100;
+    const delta = parseInt(offsetSlider.value, 10) / 10000;
+
+    bnReadout.textContent = bnT.toFixed(3);
+    zetaReadout.textContent = zeta.toFixed(2);
+    offsetReadout.textContent = delta.toFixed(4) + 'T/sym';
+
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = col.card;
+    ctx.fillRect(0, 0, W, H);
+
+    const marginL = 44, marginR = 16, marginT = 16, marginB = 26;
+    const plotW = W - marginL - marginR, plotH = H - marginT - marginB;
+    function px(n) { return marginL + (n / (N_SYMBOLS - 1)) * plotW; }
+
+    const piTrace = simulate(bnT, zeta, delta, true);
+    const pTrace = simulate(bnT, zeta, delta, false);
+
+    // Auto-scale the y-axis to whatever these particular traces actually
+    // reach -- theta[n] can legitimately range from ~0.001T (narrow
+    // bandwidth, tiny offset) to several tenths of a T (wide bandwidth,
+    // large offset), and a fixed axis range makes the small-offset cases
+    // look like a flat, uninformative line. 20% headroom above the peak,
+    // with a small floor so a near-zero trace doesn't divide by ~0.
+    let thetaMax = 0.02;
+    piTrace.concat(pTrace).forEach(function (th) {
+      const a = Math.abs(th);
+      if (a > thetaMax) thetaMax = a;
+    });
+    thetaMax *= 1.2;
+    function py(th) { return marginT + plotH / 2 - (th / thetaMax) * (plotH / 2 - 8); }
+
+    drawAxes(col, marginL, marginR, marginT, marginB, W, H);
+
+    // zero line
+    ctx.strokeStyle = col.border;
+    ctx.beginPath();
+    ctx.moveTo(marginL, py(0));
+    ctx.lineTo(W - marginR, py(0));
+    ctx.stroke();
+
+    function drawTrace(trace, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      trace.forEach(function (th, n) {
+        const X = px(n), Y = py(Math.max(-thetaMax, Math.min(thetaMax, th)));
+        if (n === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      });
+      ctx.stroke();
+    }
+    drawTrace(pTrace, col.copper);
+    drawTrace(piTrace, col.teal);
+
+    // axis labels
+    ctx.fillStyle = col.muted;
+    ctx.font = '10px "Cascadia Code", Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('symbol n →', marginL, H - 8);
+    ctx.textAlign = 'right';
+    ctx.save();
+    ctx.translate(14, marginT + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('timing phase θ[n]  (T)', 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'left';
+    ctx.fillText('±' + thetaMax.toFixed(3) + 'T', marginL + 4, marginT + 10);
+
+    const piFinal = piTrace[piTrace.length - 1];
+    const pFinal = pTrace[pTrace.length - 1];
+    // Distinguish a genuinely settled P-only plateau from an unbounded
+    // runaway (a real capture-range failure at large δ / narrow BₙT,
+    // where P-only's saturated correction can never catch up with a
+    // constant injected offset) -- comparing the trace's last 10% shows
+    // whether it actually flattened out or is still drifting steadily.
+    const pTail = pTrace[Math.floor(pTrace.length * 0.9)];
+    const pStillDrifting = Math.abs(pFinal - pTail) > 0.003;
+    const pDesc = pStillDrifting
+      ? 'never catches up, still drifting past θ=' + pFinal.toFixed(3) + 'T'
+      : 'stuck at θ→' + pFinal.toFixed(4) + 'T';
+
+    if (Math.abs(piFinal) < 0.01) {
+      verdictEl.textContent = 'PI loop: locked, θ→' + piFinal.toFixed(4) + 'T   |   P-only: ' + pDesc;
+      verdictEl.style.color = 'var(--teal)';
+    } else {
+      verdictEl.textContent = 'PI loop still acquiring (θ=' + piFinal.toFixed(4) + 'T) — try a larger BₙT, or wait longer';
+      verdictEl.style.color = 'var(--copper-strong)';
+    }
+  }
+
+  bnSlider.addEventListener('input', render);
+  zetaSlider.addEventListener('input', render);
+  offsetSlider.addEventListener('input', render);
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+  render();
+})();
+</script>
