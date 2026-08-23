@@ -30,6 +30,19 @@ Usage: python gen_test_vectors.py
 Output (gitignored, regenerate as needed): step.hex, adj.hex,
         expected_strobe.hex, expected_ismid.hex, expected_mu.hex -- one
         line per sample, across all three phases concatenated in order.
+
+Also writes expected_events_ismid.hex / expected_events_mu.hex -- a
+COMPACT, real-events-only version (one entry per actual strobe, in order,
+skipping every non-event sample), matching the exact convention
+gmsk_step2d_gardner_ted's own generator uses. Needed since the RTL fix on
+2026-08-24 (splitting the accumulate/decide logic into two pipeline
+stages to close a real timing violation -- see gmsk_step2b2_nco.v's own
+header) changed this module's sample_valid-to-strobe latency from 1 cycle
+to 2, and the testbench that used to check "one cycle after driving" (a
+pattern that only works for a single-register-stage DUT, same lesson
+gmsk_step2d_gardner_ted's own testbench development already ran into once)
+now needs the self-synchronizing capture pattern instead -- these compact
+files are what that pattern checks against.
 """
 
 STEP_WIDTH = 32
@@ -79,6 +92,8 @@ def main():
     strobe_lines = []
     ismid_lines = []
     mu_lines = []
+    events_ismid_lines = []  # compact, real-events-only
+    events_mu_lines = []
 
     phase_acc = 0  # carried continuously across all three phases
 
@@ -121,6 +136,10 @@ def main():
             ismid_lines.append('1' if mid_cross else '0')
             mu_lines.append(to_hex(mu_rtl, MU_WIDTH))
 
+            if wrap or mid_cross:
+                events_ismid_lines.append('1' if mid_cross else '0')
+                events_mu_lines.append(to_hex(mu_rtl, MU_WIDTH))
+
             if wrap:
                 strobe_count += 1
                 on_count += 1
@@ -150,11 +169,16 @@ def main():
         f.write('\n'.join(ismid_lines) + '\n')
     with open('expected_mu.hex', 'w') as f:
         f.write('\n'.join(mu_lines) + '\n')
+    with open('expected_events_ismid.hex', 'w') as f:
+        f.write('\n'.join(events_ismid_lines) + '\n')
+    with open('expected_events_mu.hex', 'w') as f:
+        f.write('\n'.join(events_mu_lines) + '\n')
 
     total = len(PHASES) * N_PER_PHASE
     print(f"\nWrote {total} samples across {len(PHASES)} phases to "
           f"step.hex / adj.hex / expected_strobe.hex / expected_ismid.hex / "
-          f"expected_mu.hex")
+          f"expected_mu.hex, plus {len(events_mu_lines)} real events to "
+          f"expected_events_ismid.hex / expected_events_mu.hex")
 
 
 if __name__ == '__main__':

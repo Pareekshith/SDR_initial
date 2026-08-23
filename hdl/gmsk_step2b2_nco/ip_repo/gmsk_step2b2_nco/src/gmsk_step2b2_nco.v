@@ -47,6 +47,44 @@
 // single strobe/is_midpoint/mu_out output triple represent either event
 // unambiguously.
 //
+// Real-hardware timing bug found and fixed (2026-08-24), discovered only
+// once this module got its first genuinely fresh full resynthesis (a
+// `reset_run synth_1`, not just `reset_run impl_1` -- every earlier
+// rebuild of this design had reused this module's original OOC synthesis
+// output unchanged, so this bug was latent from the very first B2 build
+// and simply never surfaced as the WORST violation until the interpolator's
+// own Stage 2b bug, above this module in every prior report, got fixed).
+// Worst path: phase_acc_reg[1]/C -> mu_out_reg[N]/CE, an 8-level CARRY4
+// chain, -0.340ns. Root cause: the original single-stage version decided
+// strobe/is_midpoint/mu_out COMBINATIONALLY in the SAME cycle as the full
+// STEP_WIDTH-bit accumulate (wrap_w/mid_cross_w depend on the accumulate's
+// own carry-out and top bit) -- Vivado inferred a clock-enable (CE) pin
+// for those output registers, and that CE's enable logic needed the
+// entire wide add to settle first, all in one 4ns cycle. Exactly the same
+// "don't decide-and-update from a wide combinational result in one cycle"
+// lesson gmsk_step2a_interpolator's own six real-hardware timing bugs
+// already taught this project, just never applied here until now because
+// this module's own SIM gate (arithmetic correctness) can't catch a
+// synthesis-timing issue, and no earlier build's STA analysis had a fresh
+// enough netlist to expose it.
+//
+// Fix: split into two registered stages. Stage 1 computes the accumulate
+// and REGISTERS wrap/mid_cross/mu as plain flip-flop outputs -- nothing
+// downstream happens in the same cycle. Stage 2 decides strobe/is_midpoint/
+// mu_out from those ALREADY-SETTLED, single-bit stage-1 registers -- still
+// a CE-style conditional update, but now gated by a trivial few-input
+// decision (valid_1 & wrap_1, or valid_1 & mid_cross_1) instead of a
+// 32-bit carry chain, which is what actually closes timing. Costs exactly
+// one extra cycle of latency (sample_valid to strobe/mu_out/is_midpoint:
+// 1 cycle -> 2 cycles) -- irrelevant to this fixed-rate streaming design,
+// and does NOT require re-tuning gmsk_interp_tag_delay's DELAY_CYCLES:
+// that parameter measures the INTERPOLATOR's own input-port-to-output-port
+// latency alone (a fixed property of that module, unrelated to how many
+// cycles the NCO itself takes to decide), and strobe/is_midpoint/mu_out
+// still move together in lockstep through this extra stage, so their
+// mutual alignment -- the only thing tag_delay's calibration depends on
+// -- is unchanged.
+//
 module gmsk_step2b2_nco #
 (
     parameter integer STEP_WIDTH = 32,  // phase accumulator + step precision (fraction of one SYMBOL period, 2^STEP_WIDTH = 1.0)
@@ -100,24 +138,54 @@ module gmsk_step2b2_nco #
     // before this RTL was written.
     wire [MU_WIDTH-1:0]    mu_w        = new_phase_w[HIBIT:LOBIT];
 
+    // ---- Stage 1: accumulate, and REGISTER the detection results as
+    // plain flip-flop outputs -- nothing downstream (no strobe/mu_out
+    // decision) happens combinationally in this same cycle. This is the
+    // fix: the wide accumulate now has a full cycle entirely to itself.
+    // ----
+    reg        wrap_1;
+    reg        mid_cross_1;
+    reg        valid_1;
+    reg [MU_WIDTH-1:0] mu_1;
+
     always @(posedge aclk) begin
         if (!aresetn) begin
             phase_acc   <= {STEP_WIDTH{1'b0}};
+            wrap_1      <= 1'b0;
+            mid_cross_1 <= 1'b0;
+            valid_1     <= 1'b0;
+            mu_1        <= {MU_WIDTH{1'b0}};
+        end else begin
+            valid_1 <= sample_valid;
+            if (sample_valid) begin
+                phase_acc   <= new_phase_w;
+                wrap_1      <= wrap_w;
+                mid_cross_1 <= mid_cross_w;
+                mu_1        <= mu_w;
+            end
+        end
+    end
+
+    // ---- Stage 2: decide strobe/is_midpoint/mu_out from the ALREADY-
+    // SETTLED stage-1 registers -- still a CE-style conditional update,
+    // but the enable logic is now just a few already-registered single
+    // bits (valid_1, wrap_1, mid_cross_1), not a 32-bit carry chain. ----
+    always @(posedge aclk) begin
+        if (!aresetn) begin
             strobe      <= 1'b0;
             is_midpoint <= 1'b0;
             mu_out      <= {MU_WIDTH{1'b0}};
         end else begin
             strobe <= 1'b0;  // default: pulses for exactly the one cycle below, held low otherwise
-            if (sample_valid) begin
-                phase_acc <= new_phase_w;
-                if (wrap_w) begin
+            if (valid_1) begin
+                if (wrap_1) begin
                     strobe      <= 1'b1;
                     is_midpoint <= 1'b0;
-                    mu_out      <= mu_w;
-                end else if (mid_cross_w) begin
+                    mu_out      <= mu_1;
+                end else if (mid_cross_1) begin
                     strobe      <= 1'b1;
                     is_midpoint <= 1'b1;
-                    mu_out      <= mu_w;
+                    mu_out      <= mu_1;
                 end
             end
         end

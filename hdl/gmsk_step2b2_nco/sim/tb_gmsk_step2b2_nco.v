@@ -2,16 +2,21 @@
 //
 // tb_gmsk_step2b2_nco -- Sub-step B2 SIM gate.
 //
-// Structurally identical to gmsk_step2b_nco's own proven testbench (this
-// DUT is likewise a single registered stage, no multi-stage pipeline, so
-// that pattern applies directly -- unlike gmsk_step2d_gardner_ted, which
-// needed the different self-synchronizing capture pattern for its 5-stage
-// pipeline). Single drive+check process, `#1` settle delay after every
-// `@(posedge clk)` before reading any DUT signal, and a `#1` landing after
-// every gap-wait before the next iteration's blocking assignments -- both
-// specifically to avoid the two same-edge races gmsk_step2b_nco's own
-// testbench hit and documented (see that testbench's header for the full
-// account).
+// Rewritten 2026-08-24 when the RTL fix (splitting the accumulate/decide
+// logic into two pipeline stages to close a real timing violation -- see
+// gmsk_step2b2_nco.v's own header) changed this module's sample_valid-to-
+// strobe latency from 1 cycle to 2. The ORIGINAL version of this testbench
+// used the single-process "check immediately after driving" pattern,
+// which only worked because the original DUT was a single register stage
+// -- reusing that pattern on a now-2-stage DUT would hit the exact same
+// class of bug gmsk_step2d_gardner_ted's own testbench development
+// already ran into once (see that testbench's header for the full
+// account). Switched to the PROVEN self-synchronizing capture pattern
+// instead: a separate process captures (is_midpoint, mu_out) into an
+// array every cycle `strobe` pulses, completely independent of drive
+// timing, compared against a pre-filtered "real events only" reference
+// (gen_test_vectors.py's expected_events_ismid.hex/expected_events_mu.hex)
+// -- sidesteps needing to know or hand-count the exact latency at all.
 //
 module tb_gmsk_step2b2_nco;
 
@@ -20,17 +25,17 @@ module tb_gmsk_step2b2_nco;
     localparam integer LOG2_SPS    = 2;
     localparam integer NUM_SAMPLES = 3000;  // 3 phases x 1000 samples (gen_test_vectors.py)
     localparam integer GAP_CYCLES  = 3;
+    localparam integer NUM_EVENTS  = 1500;  // upper bound headroom -- actual count read from the generator's own printed total; array sized generously, unused tail entries simply never get compared
 
     reg clk = 1'b0;
     always #5 clk = ~clk;   // 100 MHz sim clock -- arbitrary, per-clock streaming test
 
     reg aresetn = 1'b0;
 
-    reg  [STEP_WIDTH-1:0]        step_mem            [0:NUM_SAMPLES-1];
-    reg  [STEP_WIDTH-1:0]        adj_mem             [0:NUM_SAMPLES-1];
-    reg                          expected_strobe_mem [0:NUM_SAMPLES-1];
-    reg                          expected_ismid_mem  [0:NUM_SAMPLES-1];
-    reg  [MU_WIDTH-1:0]          expected_mu_mem     [0:NUM_SAMPLES-1];
+    reg  [STEP_WIDTH-1:0]        step_mem              [0:NUM_SAMPLES-1];
+    reg  [STEP_WIDTH-1:0]        adj_mem               [0:NUM_SAMPLES-1];
+    reg                          expected_events_ismid [0:NUM_EVENTS-1];
+    reg  [MU_WIDTH-1:0]          expected_events_mu    [0:NUM_EVENTS-1];
 
     reg                          sample_valid;
     reg  [STEP_WIDTH-1:0]        step_in;
@@ -58,24 +63,34 @@ module tb_gmsk_step2b2_nco;
     initial begin
         $readmemh("step.hex", step_mem);
         $readmemh("adj.hex", adj_mem);
-        $readmemb("expected_strobe.hex", expected_strobe_mem);
-        $readmemb("expected_ismid.hex", expected_ismid_mem);
-        $readmemh("expected_mu.hex", expected_mu_mem);
+        $readmemb("expected_events_ismid.hex", expected_events_ismid);
+        $readmemh("expected_events_mu.hex", expected_events_mu);
     end
 
-    integer drive_idx;
-    integer strobe_errors, ismid_errors, mu_errors;
-    integer on_count, mid_count;
+    // Capture process -- self-synchronizing on `strobe`, in order,
+    // independent of drive timing and of the DUT's exact latency.
+    integer cap_idx;
+    reg                cap_ismid [0:NUM_EVENTS-1];
+    reg [MU_WIDTH-1:0] cap_mu    [0:NUM_EVENTS-1];
 
     initial begin
-        sample_valid  = 1'b0;
-        step_in       = {STEP_WIDTH{1'b0}};
-        adj_in        = {STEP_WIDTH{1'b0}};
-        strobe_errors = 0;
-        ismid_errors  = 0;
-        mu_errors     = 0;
-        on_count      = 0;
-        mid_count     = 0;
+        cap_idx = 0;
+        forever begin
+            @(posedge clk);
+            if (strobe && cap_idx < NUM_EVENTS) begin
+                cap_ismid[cap_idx] = is_midpoint;
+                cap_mu[cap_idx]    = mu_out;
+                cap_idx = cap_idx + 1;
+            end
+        end
+    end
+
+    // Driver process.
+    integer drive_idx;
+    initial begin
+        sample_valid = 1'b0;
+        step_in      = {STEP_WIDTH{1'b0}};
+        adj_in       = {STEP_WIDTH{1'b0}};
 
         repeat (5) @(posedge clk);
         #1;
@@ -90,48 +105,60 @@ module tb_gmsk_step2b2_nco;
             @(posedge clk);
             #1;
             sample_valid = 1'b0;
-
-            if (strobe !== expected_strobe_mem[drive_idx]) begin
-                strobe_errors = strobe_errors + 1;
-                if (strobe_errors <= 20)
-                    $display("FAIL(strobe): sample %0d got=%0b expected=%0b",
-                              drive_idx, strobe, expected_strobe_mem[drive_idx]);
-            end
-            // is_midpoint/mu_out are only meaningful (per the AXI-stream-like
-            // convention every module in this project uses) on cycles where
-            // strobe itself is asserted -- check them gated on strobe, same
-            // as gmsk_step2a_interpolator's own m_axis_tdata-only-valid-when-
-            // m_axis_tvalid convention.
-            if (strobe) begin
-                if (is_midpoint !== expected_ismid_mem[drive_idx]) begin
-                    ismid_errors = ismid_errors + 1;
-                    if (ismid_errors <= 20)
-                        $display("FAIL(is_midpoint): sample %0d got=%0b expected=%0b",
-                                  drive_idx, is_midpoint, expected_ismid_mem[drive_idx]);
-                end
-                if (mu_out !== expected_mu_mem[drive_idx]) begin
-                    mu_errors = mu_errors + 1;
-                    if (mu_errors <= 20)
-                        $display("FAIL(mu): sample %0d got=%0d expected=%0d",
-                                  drive_idx, mu_out, expected_mu_mem[drive_idx]);
-                end
-                if (is_midpoint) mid_count = mid_count + 1;
-                else on_count = on_count + 1;
-            end
-
             repeat (GAP_CYCLES) @(posedge clk);
             #1;
         end
 
-        $display("Checked %0d samples: %0d on-time strobes, %0d mid-point strobes.",
-                  NUM_SAMPLES, on_count, mid_count);
-        if (strobe_errors == 0 && ismid_errors == 0 && mu_errors == 0)
-            $display("TEST PASSED");
-        else
-            $display("TEST FAILED (%0d strobe errors, %0d is_midpoint errors, %0d mu errors)",
-                      strobe_errors, ismid_errors, mu_errors);
+        // Let the pipeline fully drain (2-stage DUT, comfortably covered)
+        // before checking.
+        repeat (20) @(posedge clk);
+        #1;
 
-        $finish;
+        check_all;
     end
+
+    task check_all;
+        integer i, errors, checked;
+        begin
+            errors = 0;
+            checked = 0;
+            for (i = 0; i < NUM_EVENTS; i = i + 1) begin
+                if (expected_events_mu[i] === {MU_WIDTH{1'bx}}) begin
+                    // reached the end of the (shorter than NUM_EVENTS)
+                    // real reference list -- stop comparing here.
+                    i = NUM_EVENTS;
+                end else begin
+                    checked = checked + 1;
+                    if (i >= cap_idx) begin
+                        errors = errors + 1;
+                        if (errors <= 20)
+                            $display("FAIL: event %0d never captured (cap_idx=%0d)", i, cap_idx);
+                    end else begin
+                        if (cap_ismid[i] !== expected_events_ismid[i]) begin
+                            errors = errors + 1;
+                            if (errors <= 20)
+                                $display("FAIL(is_midpoint): event %0d got=%0b expected=%0b",
+                                          i, cap_ismid[i], expected_events_ismid[i]);
+                        end
+                        if (cap_mu[i] !== expected_events_mu[i]) begin
+                            errors = errors + 1;
+                            if (errors <= 20)
+                                $display("FAIL(mu): event %0d got=%0d expected=%0d",
+                                          i, cap_mu[i], expected_events_mu[i]);
+                        end
+                    end
+                end
+            end
+
+            $display("Checked %0d real events (captured %0d total).", checked, cap_idx);
+            if (errors == 0 && checked > 0 && cap_idx == checked)
+                $display("TEST PASSED");
+            else
+                $display("TEST FAILED (%0d errors, checked %0d, captured %0d)",
+                          errors, checked, cap_idx);
+
+            $finish;
+        end
+    endtask
 
 endmodule
