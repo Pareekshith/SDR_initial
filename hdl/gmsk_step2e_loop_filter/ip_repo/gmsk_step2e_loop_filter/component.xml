@@ -100,7 +100,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>b1a67bf4</spirit:value>
+            <spirit:value>4bb17316</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -116,7 +116,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>b1a67bf4</spirit:value>
+            <spirit:value>4bb17316</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -300,7 +300,7 @@
       <spirit:file>
         <spirit:name>src/gmsk_step2e_loop_filter.v</spirit:name>
         <spirit:fileType>verilogSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_b1a67bf4</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_4bb17316</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
@@ -387,12 +387,12 @@
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:vendorDisplayName>Pari</xilinx:vendorDisplayName>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-23T18:44:03Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-23T20:38:42Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="2ed3147f"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="77e267f4"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="3c9889b3"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="c57d817f"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="2618c12a"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="dd178bdd"/>

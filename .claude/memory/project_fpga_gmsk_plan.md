@@ -859,6 +859,20 @@ Gave Pari an exact wiring list (traced live from `system.bd`, not from memory) r
 
 **The timing-recovery loop is now genuinely, fully closed for the first time in this project**: NCO -> interpolator -> Gardner TED -> loop filter -> back into the NCO's `adj_in`. Every sub-step (A, B2, D, E) is wired together. Not yet rebuilt/redeployed -- that's the natural next step, needs a fresh `reset_run synth_1` (real RTL/wiring change) and the usual full build+deploy+ILA-capture cycle before this can be called hardware-validated.
 
+## First sub-step F bitstream: a real, substantial timing bug -- eighth instance of the same lesson (2026-08-24)
+
+Pari drove the first post-wiring rebuild. Result: `ATF: final WNS is -2.469 ns` -- roughly 20-60x worse than any violation this project had seen before (previous worst was around -0.1 to -0.3ns), and outside ATF's own `-2.0ns` default threshold for even attempting its usual auto-fix retries (no "Attempting automatic fix (N of 5)" lines at all this time).
+
+**Root cause, traced via a fresh `open_run` + `report_timing_summary` (not the stale pre-ATF report):** `rx_clk` domain, **828 failing Setup endpoints**, worst path `gmsk_step2e_loop_fil_0/inst/integrator_reg[4]/C -> integrator_reg[0]/D`, **15 logic levels (13x CARRY4 + 2 LUT), 3.902ns**. This is the exact same lesson this project has now hit EIGHT separate times (six in `gmsk_step2a_interpolator`, once in `gmsk_step2b2_nco`, now this) -- a wide combinational computation decided and written back to a register all within one clock cycle. Specifically: `gmsk_step2e_loop_filter`'s Stage 5 computed the integrator's wide (INTEG_WIDTH+1=49-bit) saturating add AND its compare-against-MAX/MIN-and-clamp AND the register write, all combinationally in a single cycle -- the numeric fixed-point DESIGN had been verified carefully (see the 2026-08-23 entry), but the SAME "split wide combinational compute across registered stages" discipline that design work itself cited from the interpolator/NCO bugs was never actually applied to this specific piece of logic.
+
+**Diagnostic detail worth remembering for next time**: of the 15 failing logic levels, 13 were the wide add itself (the CARRY4 chain) and only 2 were the saturation compare+mux -- meaning the add alone was already consuming nearly the entire 15-level/3.9ns budget before the compare+mux ever got involved. This mattered for the fix: simply moving the compare+mux to a separate cycle while leaving the add combinational might not have been enough margin; giving the ADD its own isolated registered cycle was the actual fix that mattered.
+
+**Fix, same shape as every other instance of this lesson**: split the old single Stage 5 into **Stage 5a** (computes both wide sums -- `integ_sum_5a` = integrator+ki_inc, `adj_sum_5a` = kp_term+integ_top -- and REGISTERS them raw, unsaturated, nothing else sharing the cycle) and **Stage 5b** (saturates each already-registered sum via compare+mux, writes `integrator`/`adj_out`). Adds exactly one more cycle of pipeline latency (5 stages -> 6). `adj_out`'s use of the integrator's pre-update value is still correct by construction -- both Stage 5a reads (into `integ_sum_5a` and `adj_sum_5a`) happen from the same always block/same cycle, same discipline as before.
+
+**SIM gate re-run: TEST PASSED, 0 errors across the same 360 vectors, bit-exact** -- confirms the fix is purely a retiming change with zero functional difference, same "re-verify after every pipeline-depth change" discipline every prior fix in this project has used. IP repackaged clean.
+
+**Rebuild driven** (`reset_run synth_1`, `upgrade_ip` explicitly run per the known same-version-string gotcha) -- result pending as of this entry.
+
 
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.

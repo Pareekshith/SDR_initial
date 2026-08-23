@@ -207,46 +207,84 @@ module gmsk_step2e_loop_filter #
     end
 
     // -----------------------------------------------------------------
-    // Stage 5 (final): the persistent integrator state itself -- NOT part
-    // of the per-symbol pipeline, just read/updated once per symbol at
-    // this final stage. adj_out's sum reads the integrator's CURRENT
-    // (pre-update) value -- correct by construction, since both the read
-    // (via the RHS of the adj_out assignment) and the integrator's own
-    // non-blocking update happen in the same always block/same cycle,
-    // same "don't split a value's use and its own update" discipline
-    // gmsk_step2d_gardner_ted's header already established. Both the
-    // integrator update and the final sum saturate rather than wrap --
-    // see header for why that's worth the extra logic here specifically.
+    // Stage 5a: the persistent integrator state itself -- NOT part of the
+    // per-symbol pipeline the same way stages 1-4 are, just read/updated
+    // once per symbol here. adj_out's sum reads the integrator's CURRENT
+    // (pre-update) value -- correct by construction, since both reads
+    // (into integ_sum_5a and adj_sum_5a below) happen from the SAME
+    // always block/same cycle, same "don't split a value's use and its
+    // own update" discipline gmsk_step2d_gardner_ted's header already
+    // established.
+    //
+    // REAL HARDWARE BUG found and fixed (2026-08-24): the original version
+    // of this stage computed BOTH wide sums AND their saturation
+    // compare+mux AND the register write, all combinationally in one
+    // cycle -- exactly the "wide combinational compute decided in a
+    // single cycle" lesson gmsk_step2a_interpolator's and
+    // gmsk_step2b2_nco's own real-hardware timing bugs already taught
+    // this project, just not applied here until it actually broke:
+    // worst path `integrator_reg[4]/C -> integrator_reg[0]/D`, 15 logic
+    // levels (13x CARRY4 + 2 LUT), 3.902ns, -2.469ns WNS, 828 failing
+    // endpoints on the first sub-step F build. Of those 15 levels, 13 were
+    // the wide (INTEG_WIDTH+1=49-bit) add itself (the CARRY4 chain) --
+    // only 2 were the saturation compare+mux -- so the fix is exactly the
+    // same shape as every other instance of this lesson: give the wide
+    // add its OWN registered cycle (this stage), and do the (much
+    // cheaper) saturation compare+mux in a SEPARATE following cycle
+    // (Stage 5b below) instead of sharing a cycle with the add.
     // -----------------------------------------------------------------
     reg signed [INTEG_WIDTH-1:0] integrator;
+
+    wire signed [OUT_WIDTH-1:0] integ_top = integrator >>> GUARD_BITS;  // cheap (a shift, not logic) -- fine to keep combinational
 
     // NOTE: Verilog concatenation ({a,b}) is ALWAYS unsigned, regardless of
     // the signedness of its pieces or of the net it's assigned to -- a
     // classic gotcha, and a real one here: the additions below are safe
     // either way (manually sign-extending by one guard bit before an
     // unsigned add still produces the bit-correct two's-complement sum),
-    // but the SATURATION COMPARISONS are not safe without an explicit
-    // $signed(...) cast on every concatenation -- an unguarded `wide_signed
-    // > {1'b0, SOME_MAX}` silently becomes an UNSIGNED comparison the
-    // moment one side is a bare concatenation, which would corrupt the
-    // clamp logic exactly the safety net above exists to get right. Caught
-    // by re-reading this block before trusting it, not by the SIM gate.
-    wire signed [INTEG_WIDTH:0] integ_sum_wide =
-        $signed({integrator[INTEG_WIDTH-1], integrator}) +
-        $signed({ki_inc_4[INTEG_WIDTH-1], ki_inc_4});
-    wire signed [INTEG_WIDTH-1:0] integ_next =
-        (integ_sum_wide > $signed({1'b0, INTEG_MAX})) ? INTEG_MAX :
-        (integ_sum_wide < $signed({1'b1, INTEG_MIN})) ? INTEG_MIN :
-        integ_sum_wide[INTEG_WIDTH-1:0];
+    // but it matters again below for the saturation COMPARISONS in Stage
+    // 5b (see that stage's own note) -- flagged again here since this is
+    // where the sign-extended operands are actually formed.
+    (* srl_style = "register" *) reg signed [INTEG_WIDTH:0] integ_sum_5a;
+    (* srl_style = "register" *) reg signed [OUT_WIDTH:0]   adj_sum_5a;
+    (* srl_style = "register" *) reg                        valid_5a;
 
-    wire signed [OUT_WIDTH-1:0]  integ_top = integrator >>> GUARD_BITS;
-    wire signed [OUT_WIDTH:0]    adj_sum_wide =
-        $signed({kp_term_4[OUT_WIDTH-1], kp_term_4}) +
-        $signed({integ_top[OUT_WIDTH-1], integ_top});
-    wire signed [OUT_WIDTH-1:0]  adj_next =
-        (adj_sum_wide > $signed({1'b0, ADJ_MAX})) ? ADJ_MAX :
-        (adj_sum_wide < $signed({1'b1, ADJ_MIN})) ? ADJ_MIN :
-        adj_sum_wide[OUT_WIDTH-1:0];
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            integ_sum_5a <= {(INTEG_WIDTH+1){1'b0}};
+            adj_sum_5a   <= {(OUT_WIDTH+1){1'b0}};
+            valid_5a     <= 1'b0;
+        end else begin
+            valid_5a     <= valid_4;
+            integ_sum_5a <= $signed({integrator[INTEG_WIDTH-1], integrator}) +
+                            $signed({ki_inc_4[INTEG_WIDTH-1], ki_inc_4});
+            adj_sum_5a   <= $signed({kp_term_4[OUT_WIDTH-1], kp_term_4}) +
+                            $signed({integ_top[OUT_WIDTH-1], integ_top});
+        end
+    end
+
+    // -----------------------------------------------------------------
+    // Stage 5b (final): saturate each ALREADY-REGISTERED wide sum from
+    // Stage 5a and write the results -- only compare+mux logic happens
+    // combinationally this cycle (the 2-logic-level part of the original
+    // bug's 15-level path), the expensive wide adds already completed in
+    // their own isolated cycle above. Both the integrator update and the
+    // final adj_out sum still saturate rather than wrap -- see this
+    // module's header for why that's worth the extra logic. Same
+    // explicit-$signed-cast requirement as before: bare concatenations in
+    // the comparisons below would silently become unsigned and corrupt
+    // the clamp for any negative sum, exactly the bug already caught once
+    // in this module (see git history) -- still guarded against here.
+    // -----------------------------------------------------------------
+    wire signed [INTEG_WIDTH-1:0] integ_next =
+        (integ_sum_5a > $signed({1'b0, INTEG_MAX})) ? INTEG_MAX :
+        (integ_sum_5a < $signed({1'b1, INTEG_MIN})) ? INTEG_MIN :
+        integ_sum_5a[INTEG_WIDTH-1:0];
+
+    wire signed [OUT_WIDTH-1:0] adj_next =
+        (adj_sum_5a > $signed({1'b0, ADJ_MAX})) ? ADJ_MAX :
+        (adj_sum_5a < $signed({1'b1, ADJ_MIN})) ? ADJ_MIN :
+        adj_sum_5a[OUT_WIDTH-1:0];
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -254,8 +292,8 @@ module gmsk_step2e_loop_filter #
             adj_out    <= {OUT_WIDTH{1'b0}};
             adj_valid  <= 1'b0;
         end else begin
-            adj_valid <= valid_4;
-            if (valid_4) begin
+            adj_valid <= valid_5a;
+            if (valid_5a) begin
                 adj_out    <= adj_next;
                 integrator <= integ_next;
             end

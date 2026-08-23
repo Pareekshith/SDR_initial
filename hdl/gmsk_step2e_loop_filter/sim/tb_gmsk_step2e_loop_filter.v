@@ -40,7 +40,7 @@ module tb_gmsk_step2e_loop_filter;
     localparam integer N_PHASE1 = 200;
     localparam integer N_PHASE2 = 160;
     localparam integer GAP_CYCLES = 3;
-    localparam integer DRAIN_CYCLES = 20;  // comfortably more than this 5-stage pipeline needs to flush
+    localparam integer DRAIN_CYCLES = 20;  // comfortably more than this 6-stage pipeline needs to flush (5->6 after the 2026-08-24 timing fix split Stage 5 into 5a/5b)
 
     reg clk = 1'b0;
     always #5 clk = ~clk;
