@@ -248,7 +248,28 @@ module gmsk_step2a_interpolator #
     // forward before), so giving it real work here doesn't change v3's
     // overall latency, just what Stage 2b2 does with the cycle it already
     // had.
-    reg signed [NUM_WIDTH-1:0] num_v1_2b, num_v2_2b, num_v3_2b, v0_2b;
+    reg signed [NUM_WIDTH-1:0] num_v1_2b, num_v2_2b, v0_2b;
+    // dont_touch: the FIRST rebuild with this fix showed Vivado's own
+    // register retiming (AggressiveExplore phys_opt_design, already
+    // load-bearing for this project's hold-timing fix) silently ate
+    // straight through this exact register boundary -- the worst
+    // violated path afterward ran from `x1x3_fwd_2b1_reg` directly into
+    // Stage 2c's `recip_v3_2c[...]` destination registers with no
+    // `num_v3_2b_reg` anywhere in the netlist at all (confirmed: 0 hits
+    // for that name in the routed timing report, 182 hits for the
+    // retimed/renamed `num_v3_2b0...carry...` net it turned into
+    // instead). Functionally harmless (retiming preserves I/O behavior
+    // by construction) but it defeated the whole POINT of this split --
+    // the retimed boundary just moved the same "too much combinational
+    // logic in one cycle" problem one step further downstream instead of
+    // actually breaking it into two cycles. `dont_touch` forces this
+    // specific register to stay exactly where the RTL says it is, the
+    // standard fix when a synthesis optimizer is retiming through an
+    // intentional pipeline boundary. Scoped to only this one register --
+    // num_v1_2b/num_v2_2b/v0_2b weren't implicated (v0/v1 are plain
+    // forwards, v2 already got this exact split treatment once with no
+    // retiming issue observed), so left unconstrained.
+    (* dont_touch = "true" *) reg signed [NUM_WIDTH-1:0] num_v3_2b;
     (* srl_style = "register" *) reg [MU_WIDTH-1:0] mu_2b;
     (* srl_style = "register" *) reg                valid_2b;
 
