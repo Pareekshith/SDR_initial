@@ -815,6 +815,20 @@ Pari gave the go-ahead to deploy. Followed the established recipe from the 2026-
 
 **Next: this is the moment to actually capture the payoff.** Pari can now open Vivado Hardware Manager (JTAG, same Digilent JTAG-SMT2 path used for every earlier ILA capture in this project), connect to the already-configured device (no need to re-program -- the FPGA fabric was configured from this exact `BOOT.BIN`'s bitstream at boot), and set up/run an ILA capture on `system_ila_0`. This is the first capture where `gmsk_step2b2_nco`'s `is_midpoint` tag should show a genuine interleaved ON,MID,ON,MID,... stream feeding `gmsk_step2d_gardner_ted` instead of the degenerate `is_midpoint=0`-only baseline every earlier capture in this project has been limited to -- the actual goal the whole mid-point-sample NCO architecture decision (sub-step B2) was built for.
 
+## Payoff captured: genuine ON,MID,ON,MID alternation + real Gardner TED output, both exact, first time ever (2026-08-23)
+
+**`iladata1.csv`** (16384 samples, same 9-probe layout established 2026-08-16 -- probe0/1=discriminator tdata/tvalid, probe2/3=interpolator tdata/tvalid, probe4/5=NCO strobe/mu_out, probe6/7=TED tvalid/tdata, probe8=tag-delay's delayed `is_midpoint`). Parsed with a Python script cross-tabulating every signal against its own valid/strobe pulse (never a raw eyeball read), same discipline this project's memory has reinforced twice before after getting burned skipping it.
+
+**`probe8` (delayed `is_midpoint`) -- the headline result, bit-exact:** 2048 strobes, split **exactly 1024/1024**, and every one of the 2047 consecutive strobe-to-strobe transitions alternates -- `[1,0,1,0,1,0,...]`, **zero exceptions, zero stuck runs**. The first genuinely non-degenerate ON,MID,ON,MID,... stream this project has ever produced on real silicon, matching the SIM gate's ~50/50 prediction essentially perfectly.
+
+**`probe4` (NCO strobe) confirms the mechanism, not just the tag:** 2048 pulses, every gap exactly 8 cycles, zero jitter -- exactly double sub-step B's own single-threshold-era result (1024 pulses / 16-cycle gaps, 2026-08-15), i.e. the dual-threshold NCO is genuinely firing twice per symbol (on-time + mid-point) on real hardware, not just in simulation.
+
+**`probe7` (TED output) -- the actual scientific payoff:** 1024 real error samples (`probe6` confirms perfectly uniform 16-cycle cadence, matching the OLD single-crossing rate since TED still only fires once per symbol), **599 nonzero / 425 zero, 22 distinct values, range -10 to +71**. First real, non-degenerate Gardner timing-error output in this project's history -- the 2026-08-16 baseline capture's flat `0x00000000` (`diff * 0` from the tied-off `is_midpoint`) is definitively superseded.
+
+**Everything upstream healthy too:** discriminator (`probe0`) 1106 distinct values, range -419..4754 -- confirms live RF reception, not a stale/dead signal. Interpolator (`probe2`/`probe3`) tracks it near-identically (1104 distinct, same range) as expected at `mu=0`. `probe5` (`mu_out`) sits flat at exactly `0` -- NOT a bug, the exact same mathematically-correct result sub-step B's own 2026-08-15 hardware validation found for this identical open-loop, exact-quarter-symbol-step configuration (documented above at that date's entry) -- `adj_in` is still tied to 0, no loop filter yet.
+
+**This closes real-hardware validation for sub-steps A (interpolator), B2 (dual-threshold NCO), and D (Gardner TED) wired together end-to-end.** Sub-step E (loop filter: TED error -> NCO `adj_in`) is the only piece left before sub-step F (closing the loop for real).
+
 
 
 Pari is moving from Ubuntu (where SDR_Link was developed) to Win11 with WSL. The SDR_Link source is at `/home/pari/SDR_Link/` on the Ubuntu machine. On Win11/WSL, Vivado should be installed natively on Windows (not inside WSL) — Vivado's GUI and cable drivers don't work well from WSL. Use WSL only for git/text editing; launch Vivado from the Windows Start menu.
