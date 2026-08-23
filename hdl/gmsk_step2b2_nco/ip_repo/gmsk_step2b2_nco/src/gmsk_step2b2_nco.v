@@ -129,9 +129,27 @@ module gmsk_step2b2_nco #
     // 0.5-crossing -- the mid-symbol instant. Excluding the wrap case
     // (mutually exclusive per the header's precondition) avoids ever
     // double-counting a single cycle as both events.
+    //
+    // REAL HARDWARE BUG found and fixed (2026-08-24, sub-step F rebuild):
+    // this used to also compute `mid_cross_w = !wrap_w && !old_top_w &&
+    // new_top_w` right here and register the ALREADY-COMBINED result
+    // directly into Stage 1's mid_cross_1 below -- worst path
+    // `phase_acc_reg[2]/C -> mid_cross_1_reg/D`, 11 logic levels (8x
+    // CARRY4 + 3 LUT), -0.413ns. `new_top_w`/`wrap_w` both already need
+    // the wide `sum_ext` add to finish propagating (same as before, that
+    // part is unavoidable and wrap_1's own path already budgets for it
+    // fine) -- but the EXTRA 3-input AND-NOT-AND combine on top of that,
+    // in the SAME cycle, was just enough to tip mid_cross over budget
+    // while wrap_1 alone stayed under it. Fix: register the RAW bits
+    // (`old_top_1`/`new_top_1`) out of Stage 1 unchanged, and do the
+    // actual AND-NOT-AND combine as the FIRST thing Stage 2 does instead
+    // -- a trivial few-input gate on already-registered single bits,
+    // exactly the same "decide from settled stage-1 registers, not from
+    // a value still mid-flight out of a wide adder" discipline Stage 2
+    // already uses for wrap_1/mu_out. Zero added latency (still 2 total
+    // stages) -- just moved WHICH stage does this one small gate.
     wire                   old_top_w   = phase_acc[STEP_WIDTH-1];
     wire                   new_top_w   = new_phase_w[STEP_WIDTH-1];
-    wire                   mid_cross_w = !wrap_w && !old_top_w && new_top_w;
 
     // mu is the SAME bit-select for both crossing types -- see header for
     // why this is exact, not an approximation, and verified numerically
@@ -140,11 +158,13 @@ module gmsk_step2b2_nco #
 
     // ---- Stage 1: accumulate, and REGISTER the detection results as
     // plain flip-flop outputs -- nothing downstream (no strobe/mu_out
-    // decision) happens combinationally in this same cycle. This is the
-    // fix: the wide accumulate now has a full cycle entirely to itself.
+    // decision, no mid_cross combine) happens combinationally in this
+    // same cycle. This is the fix: the wide accumulate now has a full
+    // cycle entirely to itself.
     // ----
     reg        wrap_1;
-    reg        mid_cross_1;
+    reg        old_top_1;
+    reg        new_top_1;
     reg        valid_1;
     reg [MU_WIDTH-1:0] mu_1;
 
@@ -152,7 +172,8 @@ module gmsk_step2b2_nco #
         if (!aresetn) begin
             phase_acc   <= {STEP_WIDTH{1'b0}};
             wrap_1      <= 1'b0;
-            mid_cross_1 <= 1'b0;
+            old_top_1   <= 1'b0;
+            new_top_1   <= 1'b0;
             valid_1     <= 1'b0;
             mu_1        <= {MU_WIDTH{1'b0}};
         end else begin
@@ -160,7 +181,8 @@ module gmsk_step2b2_nco #
             if (sample_valid) begin
                 phase_acc   <= new_phase_w;
                 wrap_1      <= wrap_w;
-                mid_cross_1 <= mid_cross_w;
+                old_top_1   <= old_top_w;
+                new_top_1   <= new_top_w;
                 mu_1        <= mu_w;
             end
         end
@@ -169,7 +191,10 @@ module gmsk_step2b2_nco #
     // ---- Stage 2: decide strobe/is_midpoint/mu_out from the ALREADY-
     // SETTLED stage-1 registers -- still a CE-style conditional update,
     // but the enable logic is now just a few already-registered single
-    // bits (valid_1, wrap_1, mid_cross_1), not a 32-bit carry chain. ----
+    // bits (valid_1, wrap_1, mid_cross_2) combined via one cheap gate,
+    // not a 32-bit carry chain sharing a cycle with anything else. ----
+    wire mid_cross_2 = !wrap_1 && !old_top_1 && new_top_1;
+
     always @(posedge aclk) begin
         if (!aresetn) begin
             strobe      <= 1'b0;
@@ -182,7 +207,7 @@ module gmsk_step2b2_nco #
                     strobe      <= 1'b1;
                     is_midpoint <= 1'b0;
                     mu_out      <= mu_1;
-                end else if (mid_cross_1) begin
+                end else if (mid_cross_2) begin
                     strobe      <= 1'b1;
                     is_midpoint <= 1'b1;
                     mu_out      <= mu_1;
